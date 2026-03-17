@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.holtwinters import ExponentialSmoothing
 
-
 def fit_forecast(weekly_sales: pd.Series, forecast_weeks: int = 8) -> dict:
     model = ExponentialSmoothing(
         weekly_sales,
