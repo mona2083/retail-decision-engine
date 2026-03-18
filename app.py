@@ -11,10 +11,14 @@ from inventory import run_inventory_optimization, simple_eoq
 
 st.set_page_config(page_title="Retail Decision Engine", layout="wide")
 
+PORTFOLIO_URL = "https://mona2083.github.io/portfolio-2026/index.html"
+
 LANG = {
     "ja": {
         "title":           "🏪 Retail Decision Engine",
         "caption":         "需要予測 × ダイナミックプライシング × 発注最適化",
+        "portfolio_btn":   "🔗 ポートフォリオを見る",
+        "portfolio_label": "ポートフォリオ",
         "data_header":     "データ",
         "use_demo":        "デモデータを使う",
         "upload_csv":      "CSVをアップロード",
@@ -82,6 +86,8 @@ LANG = {
     "en": {
         "title":           "🏪 Retail Decision Engine",
         "caption":         "Demand Forecasting × Dynamic Pricing × Inventory Optimization",
+        "portfolio_btn":   "🔗 View Portfolio",
+        "portfolio_label": "Portfolio",
         "data_header":     "Data",
         "use_demo":        "Use demo data",
         "upload_csv":      "Upload CSV",
@@ -157,6 +163,7 @@ with st.sidebar:
     lang = "ja" if lang_choice == "日本語" else "en"
     T = LANG[lang]
 
+    st.link_button(T["portfolio_btn"], PORTFOLIO_URL, width="stretch")
     st.divider()
     st.header(T["data_header"])
 
@@ -164,7 +171,7 @@ with st.sidebar:
 
     if T["use_demo"] in data_mode:
         seed = st.number_input(T["seed"], value=42, step=1)
-        if st.button(T["generate"], use_container_width=True):
+        if st.button(T["generate"], width="stretch"):
             st.session_state.weekly_df = generate_weekly_sales(104, random_state=int(seed))
             st.session_state.daily_df  = generate_daily_sales(365, random_state=int(seed))
             st.cache_data.clear()
@@ -200,8 +207,12 @@ with st.sidebar:
 weekly_df = st.session_state.weekly_df
 daily_df  = st.session_state.daily_df
 
-st.title(T["title"])
-st.caption(T["caption"])
+head_l, head_r = st.columns([0.78, 0.22], vertical_alignment="center")
+with head_l:
+    st.title(T["title"])
+    st.caption(T["caption"])
+with head_r:
+    st.link_button(T["portfolio_label"], PORTFOLIO_URL, width="stretch")
 
 
 def pname(pid):
@@ -248,7 +259,7 @@ def render_product_tab(pid: str):
         )
         fig_fc.update_layout(height=320, margin=dict(t=20,b=20,l=20,r=20),
                              legend=dict(orientation="h", y=1.05))
-        st.plotly_chart(fig_fc, use_container_width=True)
+        st.plotly_chart(fig_fc, width="stretch")
 
         # 曜日・月別
         col_w, col_m = st.columns(2)
@@ -262,7 +273,7 @@ def render_product_tab(pid: str):
             ))
             fig_wd.update_layout(title=T["weekday_title"], height=240,
                                  margin=dict(t=36,b=10,l=10,r=10))
-            st.plotly_chart(fig_wd, use_container_width=True)
+            st.plotly_chart(fig_wd, width="stretch")
         with col_m:
             fig_mo = go.Figure(go.Bar(
                 x=[month_names[i-1] for i in decomp["monthly_avg"].index],
@@ -273,7 +284,7 @@ def render_product_tab(pid: str):
             ))
             fig_mo.update_layout(title=T["monthly_title"], height=240,
                                  margin=dict(t=36,b=10,l=10,r=10))
-            st.plotly_chart(fig_mo, use_container_width=True)
+            st.plotly_chart(fig_mo, width="stretch")
 
     # プライシング
     with col_pr:
@@ -311,7 +322,7 @@ def render_product_tab(pid: str):
             fig_p.add_vline(x=current_price, line_dash="dot", line_color="#888",
                             annotation_text=T["cur_price_line"], row=row, col=1)
         fig_p.update_layout(height=560, margin=dict(t=40,b=20,l=20,r=20), showlegend=False)
-        st.plotly_chart(fig_p, use_container_width=True)
+        st.plotly_chart(fig_p, width="stretch")
 
     st.divider()
 
@@ -328,7 +339,7 @@ def render_product_tab(pid: str):
     with col_i3:
         holding_cost  = st.number_input(T["holding_cost"], 0.01, 5.0, 0.10, step=0.01, key=f"hc_{pid}")
 
-    if st.button(T["run_inv"], type="primary", use_container_width=True, key=f"runinv_{pid}"):
+    if st.button(T["run_inv"], type="primary", width="stretch", key=f"runinv_{pid}"):
         with st.spinner(T["loading"]):
             prod_w2     = weekly_df[weekly_df["product_id"] == pid].set_index("date")["sales"].asfreq("W-MON")
             fc2         = fit_forecast(prod_w2, 8)
@@ -374,7 +385,7 @@ def render_product_tab(pid: str):
         fig_inv.add_scatter(x=wk_lbl, y=[int(d) for d in fc_vals],
                             line=dict(color="#1a4a7a", width=2), name=T["demand_plan"], row=2, col=1)
         fig_inv.update_layout(height=400, margin=dict(t=40,b=20,l=20,r=20))
-        st.plotly_chart(fig_inv, use_container_width=True)
+        st.plotly_chart(fig_inv, width="stretch")
 
         inv_df = pd.DataFrame({
             T["week"]:        wk_lbl,
@@ -382,7 +393,7 @@ def render_product_tab(pid: str):
             T["order"]:       inv["order_qty"],
             T["stock_level"]: inv["stock"],
         })
-        st.dataframe(inv_df, use_container_width=True, hide_index=True)
+        st.dataframe(inv_df, width="stretch", hide_index=True)
 
 
 # ── プロダクトタブ ────────────────────────────────────────────────
