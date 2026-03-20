@@ -157,62 +157,73 @@ LANG = {
 MONTH_NAMES_JA = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"]
 MONTH_NAMES_EN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
-# ── サイドバー ────────────────────────────────────────────────────
-with st.sidebar:
-    lang_choice = st.radio("🌐 Language / 言語", ["日本語", "English"], horizontal=True)
-    lang = "ja" if lang_choice == "日本語" else "en"
-    T = LANG[lang]
+def ensure_default_data(random_state: int = 42) -> None:
+    if "weekly_df" not in st.session_state:
+        st.session_state.weekly_df = generate_weekly_sales(104, random_state=random_state)
+        st.session_state.daily_df = generate_daily_sales(365, random_state=random_state)
 
-    st.link_button(T["portfolio_btn"], PORTFOLIO_URL, width="stretch")
-    st.divider()
-    st.header(T["data_header"])
 
-    data_mode = st.radio("", [T["use_demo"], T["upload_csv"]], label_visibility="collapsed")
+def render_sidebar() -> tuple[str, dict]:
+    with st.sidebar:
+        lang_choice = st.radio("🌐 Language / 言語", ["日本語", "English"], horizontal=True)
+        lang = "ja" if lang_choice == "日本語" else "en"
+        T = LANG[lang]
 
-    if T["use_demo"] in data_mode:
-        seed = st.number_input(T["seed"], value=42, step=1)
-        if st.button(T["generate"], width="stretch"):
-            st.session_state.weekly_df = generate_weekly_sales(104, random_state=int(seed))
-            st.session_state.daily_df  = generate_daily_sales(365, random_state=int(seed))
-            st.cache_data.clear()
-            st.rerun()
-        if "weekly_df" not in st.session_state:
-            st.session_state.weekly_df = generate_weekly_sales(104, random_state=42)
-            st.session_state.daily_df  = generate_daily_sales(365, random_state=42)
-    else:
-        st.caption(T["csv_desc"])
-        st.caption(T["csv_col1"])
-        st.caption(T["csv_col2"])
-        st.caption(T["csv_col3"])
-        with st.expander("📋 " + ("フォーマット例" if lang == "ja" else "Format example")):
-            st.code(T["csv_example"], language="csv")
-        uploaded = st.file_uploader(T["upload_label"], type=["csv"])
-        if uploaded:
-            try:
-                df_up = pd.read_csv(uploaded, parse_dates=["date"])
-                required = ["date", "product_id", "sales"]
-                if all(c in df_up.columns for c in required):
-                    st.session_state.weekly_df = df_up
-                    st.session_state.daily_df  = generate_daily_sales(365, random_state=42)
-                    st.cache_data.clear()
-                    st.success(T["loaded"])
-                else:
-                    st.error(f"Missing columns: {required}")
-            except Exception as e:
-                st.error(str(e))
-        if "weekly_df" not in st.session_state:
-            st.session_state.weekly_df = generate_weekly_sales(104, random_state=42)
-            st.session_state.daily_df  = generate_daily_sales(365, random_state=42)
+        st.link_button(T["portfolio_btn"], PORTFOLIO_URL, width="stretch")
+        st.divider()
+        st.header(T["data_header"])
 
+        data_mode = st.radio(
+            "Data mode",
+            [T["use_demo"], T["upload_csv"]],
+            label_visibility="collapsed",
+        )
+
+        if T["use_demo"] in data_mode:
+            seed = st.number_input(T["seed"], value=42, step=1)
+            if st.button(T["generate"], width="stretch"):
+                st.session_state.weekly_df = generate_weekly_sales(104, random_state=int(seed))
+                st.session_state.daily_df = generate_daily_sales(365, random_state=int(seed))
+                st.cache_data.clear()
+                st.rerun()
+            ensure_default_data(42)
+        else:
+            st.caption(T["csv_desc"])
+            st.caption(T["csv_col1"])
+            st.caption(T["csv_col2"])
+            st.caption(T["csv_col3"])
+            with st.expander("📋 " + ("フォーマット例" if lang == "ja" else "Format example")):
+                st.code(T["csv_example"], language="csv")
+            uploaded = st.file_uploader(T["upload_label"], type=["csv"])
+            if uploaded:
+                try:
+                    df_up = pd.read_csv(uploaded, parse_dates=["date"])
+                    required = ["date", "product_id", "sales"]
+                    if all(c in df_up.columns for c in required):
+                        st.session_state.weekly_df = df_up
+                        st.session_state.daily_df = generate_daily_sales(365, random_state=42)
+                        st.cache_data.clear()
+                        st.success(T["loaded"])
+                    else:
+                        st.error(f"Missing columns: {required}")
+                except Exception as e:
+                    st.error(str(e))
+            ensure_default_data(42)
+    return lang, T
+
+
+def render_header(T: dict) -> None:
+    head_l, head_r = st.columns([0.78, 0.22], vertical_alignment="center")
+    with head_l:
+        st.title(T["title"])
+        st.caption(T["caption"])
+    with head_r:
+        st.link_button(T["portfolio_label"], PORTFOLIO_URL, width="stretch")
+
+lang, T = render_sidebar()
 weekly_df = st.session_state.weekly_df
-daily_df  = st.session_state.daily_df
-
-head_l, head_r = st.columns([0.78, 0.22], vertical_alignment="center")
-with head_l:
-    st.title(T["title"])
-    st.caption(T["caption"])
-with head_r:
-    st.link_button(T["portfolio_label"], PORTFOLIO_URL, width="stretch")
+daily_df = st.session_state.daily_df
+render_header(T)
 
 
 def pname(pid):
@@ -220,131 +231,118 @@ def pname(pid):
     return f"{p['icon']} {p['ja'] if lang == 'ja' else p['en']}"
 
 
-def render_product_tab(pid: str):
-    info       = PRODUCTS[pid]
-    base_price = info["base_price"]
-    unit_cost  = info["unit_cost"]
-    elasticity = info["elasticity"]
-    base_demand= info["base_demand"] * 7
+def get_product_weekly_series(pid: str) -> pd.Series:
+    return weekly_df[weekly_df["product_id"] == pid].set_index("date")["sales"].asfreq("W-MON")
 
-    # ── 需要予測 ＆ プライシング ──────────────────────────────────
-    st.subheader(T["section_forecast_pricing"])
 
-    fc_weeks = st.slider(T["forecast_weeks"], 4, 12, 8, key=f"fcwk_{pid}")
+def render_forecast_panel(fc_result: dict, decomp: dict) -> None:
+    st.caption(f"MAPE: {fc_result['mape']:.1f}%")
+    fig_fc = go.Figure()
+    fig_fc.add_scatter(
+        x=fc_result["history"].index, y=fc_result["history"].values,
+        name=T["history"], line=dict(color="#1a4a7a", width=2)
+    )
+    fig_fc.add_scatter(
+        x=fc_result["fitted"].index, y=fc_result["fitted"].values,
+        name=T["fitted"], line=dict(color="#b7d5c8", width=1.5, dash="dot")
+    )
+    fc_idx = fc_result["forecast"].index
+    fig_fc.add_scatter(
+        x=fc_idx, y=fc_result["forecast"].values,
+        name=T["forecast"], line=dict(color="#b5451b", width=2.5)
+    )
+    fig_fc.add_scatter(
+        x=list(fc_idx) + list(fc_idx[::-1]),
+        y=list(fc_result["upper"].values) + list(fc_result["lower"].values[::-1]),
+        fill="toself", fillcolor="rgba(181,69,27,0.12)",
+        line=dict(width=0), name=T["ci"],
+    )
+    fig_fc.update_layout(height=320, margin=dict(t=20, b=20, l=20, r=20), legend=dict(orientation="h", y=1.05))
+    st.plotly_chart(fig_fc, width="stretch")
 
-    with st.spinner(T["loading"]):
-        prod_weekly = weekly_df[weekly_df["product_id"] == pid].set_index("date")["sales"]
-        prod_weekly = prod_weekly.asfreq("W-MON")
-        fc_result   = fit_forecast(prod_weekly, fc_weeks)
-        decomp      = decompose_weekly_patterns(daily_df, pid)
+    col_w, col_m = st.columns(2)
+    month_names = MONTH_NAMES_JA if lang == "ja" else MONTH_NAMES_EN
+    with col_w:
+        fig_wd = go.Figure(go.Bar(
+            x=list(decomp["weekday_avg"].index), y=decomp["weekday_avg"].values,
+            marker_color=["#b5451b" if v == decomp["weekday_avg"].max()
+                          else "#2d6a4f" if v == decomp["weekday_avg"].min()
+                          else "#a8c4e0" for v in decomp["weekday_avg"].values],
+        ))
+        fig_wd.update_layout(title=T["weekday_title"], height=240, margin=dict(t=36, b=10, l=10, r=10))
+        st.plotly_chart(fig_wd, width="stretch")
+    with col_m:
+        fig_mo = go.Figure(go.Bar(
+            x=[month_names[i - 1] for i in decomp["monthly_avg"].index],
+            y=decomp["monthly_avg"].values,
+            marker_color=["#b5451b" if v == decomp["monthly_avg"].max()
+                          else "#2d6a4f" if v == decomp["monthly_avg"].min()
+                          else "#a8c4e0" for v in decomp["monthly_avg"].values],
+        ))
+        fig_mo.update_layout(title=T["monthly_title"], height=240, margin=dict(t=36, b=10, l=10, r=10))
+        st.plotly_chart(fig_mo, width="stretch")
 
-    col_fc, col_pr = st.columns(2)
 
-    # 需要予測グラフ
-    with col_fc:
-        st.caption(f"MAPE: {fc_result['mape']:.1f}%")
-        fig_fc = go.Figure()
-        fig_fc.add_scatter(x=fc_result["history"].index, y=fc_result["history"].values,
-                           name=T["history"], line=dict(color="#1a4a7a", width=2))
-        fig_fc.add_scatter(x=fc_result["fitted"].index, y=fc_result["fitted"].values,
-                           name=T["fitted"], line=dict(color="#b7d5c8", width=1.5, dash="dot"))
-        fc_idx = fc_result["forecast"].index
-        fig_fc.add_scatter(x=fc_idx, y=fc_result["forecast"].values,
-                           name=T["forecast"], line=dict(color="#b5451b", width=2.5))
-        fig_fc.add_scatter(
-            x=list(fc_idx) + list(fc_idx[::-1]),
-            y=list(fc_result["upper"].values) + list(fc_result["lower"].values[::-1]),
-            fill="toself", fillcolor="rgba(181,69,27,0.12)",
-            line=dict(width=0), name=T["ci"],
+def render_pricing_panel(pid: str, base_price: float, base_demand: float, elasticity: float, unit_cost: float) -> None:
+    opt = find_optimal_price(base_price, base_demand, elasticity, unit_cost)
+    current_price = st.slider(
+        T["price_slider"],
+        min_value=float(round(unit_cost * 1.1, 2)),
+        max_value=float(round(base_price * 2.2, 2)),
+        value=float(base_price), step=0.05,
+        key=f"price_{pid}",
+    )
+    demand_now = demand_at_price(current_price, base_price, base_demand, elasticity)
+    profit_now = (current_price - unit_cost) * demand_now
+    opt_profit = opt["optimal_profit"]
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric(T["demand_label"], f"{demand_now:.0f} {T['units']}")
+    m2.metric(T["revenue_label"], f"${current_price * demand_now:,.2f}")
+    m3.metric(
+        T["profit_label"], f"${profit_now:,.2f}",
+        delta=f"${profit_now - opt_profit:+.2f} vs opt",
+        delta_color="inverse" if profit_now < opt_profit * 0.98 else "off",
+    )
+
+    st.caption(f"✨ {T['optimal_price']}: **${opt['optimal_price']:.2f}** — {T['elasticity_info']}: {elasticity}")
+
+    curve = price_sensitivity_curve(base_price, base_demand, elasticity, unit_cost)
+    fig_p = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=[T["profit_curve"], T["demand_curve"]])
+    fig_p.add_scatter(x=curve["prices"], y=curve["profits"], line=dict(color="#2d6a4f", width=2.5), row=1, col=1)
+    fig_p.add_scatter(x=curve["prices"], y=curve["demands"], line=dict(color="#1a4a7a", width=2.5), row=2, col=1)
+    for row in [1, 2]:
+        fig_p.add_vline(
+            x=opt["optimal_price"], line_dash="dash", line_color="#b5451b",
+            annotation_text=T["opt_price_line"], row=row, col=1
         )
-        fig_fc.update_layout(height=320, margin=dict(t=20,b=20,l=20,r=20),
-                             legend=dict(orientation="h", y=1.05))
-        st.plotly_chart(fig_fc, width="stretch")
-
-        # 曜日・月別
-        col_w, col_m = st.columns(2)
-        month_names = MONTH_NAMES_JA if lang == "ja" else MONTH_NAMES_EN
-        with col_w:
-            fig_wd = go.Figure(go.Bar(
-                x=list(decomp["weekday_avg"].index), y=decomp["weekday_avg"].values,
-                marker_color=["#b5451b" if v == decomp["weekday_avg"].max()
-                              else "#2d6a4f" if v == decomp["weekday_avg"].min()
-                              else "#a8c4e0" for v in decomp["weekday_avg"].values],
-            ))
-            fig_wd.update_layout(title=T["weekday_title"], height=240,
-                                 margin=dict(t=36,b=10,l=10,r=10))
-            st.plotly_chart(fig_wd, width="stretch")
-        with col_m:
-            fig_mo = go.Figure(go.Bar(
-                x=[month_names[i-1] for i in decomp["monthly_avg"].index],
-                y=decomp["monthly_avg"].values,
-                marker_color=["#b5451b" if v == decomp["monthly_avg"].max()
-                              else "#2d6a4f" if v == decomp["monthly_avg"].min()
-                              else "#a8c4e0" for v in decomp["monthly_avg"].values],
-            ))
-            fig_mo.update_layout(title=T["monthly_title"], height=240,
-                                 margin=dict(t=36,b=10,l=10,r=10))
-            st.plotly_chart(fig_mo, width="stretch")
-
-    # プライシング
-    with col_pr:
-        opt = find_optimal_price(base_price, base_demand, elasticity, unit_cost)
-        current_price = st.slider(
-            T["price_slider"],
-            min_value=float(round(unit_cost * 1.1, 2)),
-            max_value=float(round(base_price * 2.2, 2)),
-            value=float(base_price), step=0.05,
-            key=f"price_{pid}",
+        fig_p.add_vline(
+            x=current_price, line_dash="dot", line_color="#888",
+            annotation_text=T["cur_price_line"], row=row, col=1
         )
-        demand_now  = demand_at_price(current_price, base_price, base_demand, elasticity)
-        profit_now  = (current_price - unit_cost) * demand_now
-        opt_profit  = opt["optimal_profit"]
+    fig_p.update_layout(height=560, margin=dict(t=40, b=20, l=20, r=20), showlegend=False)
+    st.plotly_chart(fig_p, width="stretch")
 
-        m1, m2, m3 = st.columns(3)
-        m1.metric(T["demand_label"],  f"{demand_now:.0f} {T['units']}")
-        m2.metric(T["revenue_label"], f"${current_price * demand_now:,.2f}")
-        m3.metric(T["profit_label"],  f"${profit_now:,.2f}",
-                  delta=f"${profit_now - opt_profit:+.2f} vs opt",
-                  delta_color="inverse" if profit_now < opt_profit * 0.98 else "off")
 
-        st.caption(f"✨ {T['optimal_price']}: **${opt['optimal_price']:.2f}** — {T['elasticity_info']}: {elasticity}")
-
-        curve = price_sensitivity_curve(base_price, base_demand, elasticity, unit_cost)
-        fig_p = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                              subplot_titles=[T["profit_curve"], T["demand_curve"]])
-        fig_p.add_scatter(x=curve["prices"], y=curve["profits"],
-                          line=dict(color="#2d6a4f", width=2.5), row=1, col=1)
-        fig_p.add_scatter(x=curve["prices"], y=curve["demands"],
-                          line=dict(color="#1a4a7a", width=2.5), row=2, col=1)
-        for row in [1, 2]:
-            fig_p.add_vline(x=opt["optimal_price"], line_dash="dash", line_color="#b5451b",
-                            annotation_text=T["opt_price_line"], row=row, col=1)
-            fig_p.add_vline(x=current_price, line_dash="dot", line_color="#888",
-                            annotation_text=T["cur_price_line"], row=row, col=1)
-        fig_p.update_layout(height=560, margin=dict(t=40,b=20,l=20,r=20), showlegend=False)
-        st.plotly_chart(fig_p, width="stretch")
-
-    st.divider()
-
-    # ── 発注最適化 ────────────────────────────────────────────────
+def render_inventory_panel(pid: str, unit_cost: float) -> None:
     st.subheader(T["section_inventory"])
 
     col_i1, col_i2, col_i3 = st.columns(3)
     with col_i1:
         current_stock = st.number_input(T["current_stock"], 0, 2000, 150, step=10, key=f"cs_{pid}")
-        min_stock     = st.number_input(T["min_stock"],     0, 500,  50,  step=10, key=f"ms_{pid}")
+        min_stock = st.number_input(T["min_stock"], 0, 500, 50, step=10, key=f"ms_{pid}")
     with col_i2:
-        max_stock     = st.number_input(T["max_stock"],     100, 3000, 600, step=50, key=f"mx_{pid}")
-        order_cost    = st.number_input(T["order_cost"],    1.0, 500.0, 50.0, step=5.0, key=f"oc_{pid}")
+        max_stock = st.number_input(T["max_stock"], 100, 3000, 600, step=50, key=f"mx_{pid}")
+        order_cost = st.number_input(T["order_cost"], 1.0, 500.0, 50.0, step=5.0, key=f"oc_{pid}")
     with col_i3:
-        holding_cost  = st.number_input(T["holding_cost"], 0.01, 5.0, 0.10, step=0.01, key=f"hc_{pid}")
+        holding_cost = st.number_input(T["holding_cost"], 0.01, 5.0, 0.10, step=0.01, key=f"hc_{pid}")
 
     if st.button(T["run_inv"], type="primary", width="stretch", key=f"runinv_{pid}"):
         with st.spinner(T["loading"]):
-            prod_w2     = weekly_df[weekly_df["product_id"] == pid].set_index("date")["sales"].asfreq("W-MON")
-            fc2         = fit_forecast(prod_w2, 8)
+            prod_w2 = get_product_weekly_series(pid)
+            fc2 = fit_forecast(prod_w2, 8)
             forecast_8w = fc2["forecast"].values.tolist()
-            inv_result  = run_inventory_optimization(
+            inv_result = run_inventory_optimization(
                 forecast_demand=forecast_8w,
                 current_stock=int(current_stock),
                 min_stock=int(min_stock),
@@ -359,41 +357,65 @@ def render_product_tab(pid: str):
             }
 
     if f"inv_{pid}" in st.session_state:
-        inv      = st.session_state[f"inv_{pid}"]["result"]
-        fc_vals  = st.session_state[f"inv_{pid}"]["forecast"]
-        n        = len(inv["order_qty"])
-        wk_lbl   = [f"W+{i+1}" for i in range(n)]
+        inv = st.session_state[f"inv_{pid}"]["result"]
+        fc_vals = st.session_state[f"inv_{pid}"]["forecast"]
+        n = len(inv["order_qty"])
+        wk_lbl = [f"W+{i + 1}" for i in range(n)]
 
         col_m1, col_m2 = st.columns(2)
         col_m1.metric(T["total_order_cost"], f"${inv['total_cost']:,.2f}")
         eoq_val = simple_eoq(
-            annual_demand=sum(fc_vals) * (52/8),
+            annual_demand=sum(fc_vals) * (52 / 8),
             order_cost=st.session_state[f"inv_{pid}"]["order_cost"],
             holding_cost_per_unit=st.session_state[f"inv_{pid}"]["holding_cost"] * 52,
         )
         col_m2.metric(T["eoq"], f"{eoq_val:.0f} {T['units']}")
 
-        fig_inv = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                subplot_titles=[T["stock_level"], T["order"]])
-        fig_inv.add_bar(x=wk_lbl, y=inv["stock"], name=T["stock_level"],
-                        marker_color="#2d6a4f", opacity=0.75, row=1, col=1)
-        fig_inv.add_scatter(x=wk_lbl, y=[min_stock]*n,
-                            line=dict(color="#c0392b", dash="dash"), row=1, col=1,
-                            name=("最低在庫" if lang == "ja" else "Min Stock"))
-        fig_inv.add_bar(x=wk_lbl, y=inv["order_qty"], name=T["order"],
-                        marker_color="#b5451b", opacity=0.85, row=2, col=1)
-        fig_inv.add_scatter(x=wk_lbl, y=[int(d) for d in fc_vals],
-                            line=dict(color="#1a4a7a", width=2), name=T["demand_plan"], row=2, col=1)
-        fig_inv.update_layout(height=400, margin=dict(t=40,b=20,l=20,r=20))
+        fig_inv = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=[T["stock_level"], T["order"]])
+        fig_inv.add_bar(x=wk_lbl, y=inv["stock"], name=T["stock_level"], marker_color="#2d6a4f", opacity=0.75, row=1, col=1)
+        fig_inv.add_scatter(
+            x=wk_lbl, y=[min_stock] * n, line=dict(color="#c0392b", dash="dash"), row=1, col=1,
+            name=("最低在庫" if lang == "ja" else "Min Stock"),
+        )
+        fig_inv.add_bar(x=wk_lbl, y=inv["order_qty"], name=T["order"], marker_color="#b5451b", opacity=0.85, row=2, col=1)
+        fig_inv.add_scatter(
+            x=wk_lbl, y=[int(d) for d in fc_vals], line=dict(color="#1a4a7a", width=2), name=T["demand_plan"], row=2, col=1
+        )
+        fig_inv.update_layout(height=400, margin=dict(t=40, b=20, l=20, r=20))
         st.plotly_chart(fig_inv, width="stretch")
 
         inv_df = pd.DataFrame({
-            T["week"]:        wk_lbl,
+            T["week"]: wk_lbl,
             T["demand_plan"]: [int(d) for d in fc_vals],
-            T["order"]:       inv["order_qty"],
+            T["order"]: inv["order_qty"],
             T["stock_level"]: inv["stock"],
         })
         st.dataframe(inv_df, width="stretch", hide_index=True)
+
+
+def render_product_tab(pid: str):
+    info = PRODUCTS[pid]
+    base_price = info["base_price"]
+    unit_cost = info["unit_cost"]
+    elasticity = info["elasticity"]
+    base_demand = info["base_demand"] * 7
+
+    st.subheader(T["section_forecast_pricing"])
+    fc_weeks = st.slider(T["forecast_weeks"], 4, 12, 8, key=f"fcwk_{pid}")
+
+    with st.spinner(T["loading"]):
+        prod_weekly = get_product_weekly_series(pid)
+        fc_result = fit_forecast(prod_weekly, fc_weeks)
+        decomp = decompose_weekly_patterns(daily_df, pid)
+
+    col_fc, col_pr = st.columns(2)
+    with col_fc:
+        render_forecast_panel(fc_result, decomp)
+    with col_pr:
+        render_pricing_panel(pid, base_price, base_demand, elasticity, unit_cost)
+
+    st.divider()
+    render_inventory_panel(pid, unit_cost)
 
 
 # ── プロダクトタブ ────────────────────────────────────────────────
@@ -404,59 +426,65 @@ for tab, pid in zip(tabs, PRODUCTS):
 
 st.divider()
 
-# ── 総合ダッシュボード ────────────────────────────────────────────
-st.header(T["section_dashboard"])
-st.caption(T["dashboard_caption"])
+def render_dashboard() -> None:
+    st.header(T["section_dashboard"])
+    st.caption(T["dashboard_caption"])
 
-dash_cols = st.columns(len(PRODUCTS))
-for col, pid in zip(dash_cols, PRODUCTS):
-    info  = PRODUCTS[pid]
-    with col:
-        st.markdown(f"### {pname(pid)}")
+    dash_cols = st.columns(len(PRODUCTS))
+    for col, pid in zip(dash_cols, PRODUCTS):
+        info = PRODUCTS[pid]
+        with col:
+            st.markdown(f"### {pname(pid)}")
 
-        # 需要
-        prod_w = weekly_df[weekly_df["product_id"] == pid].set_index("date")["sales"].asfreq("W-MON")
-        fc_d   = fit_forecast(prod_w, 4)
-        next_d = fc_d["forecast"].values[0]
-        last_d = prod_w.values[-1]
-        delta  = (next_d - last_d) / last_d * 100
-        month_names = MONTH_NAMES_JA if lang == "ja" else MONTH_NAMES_EN
-        peak_m = SEASONAL_FACTORS[pid].index(max(SEASONAL_FACTORS[pid]))
+            prod_w = get_product_weekly_series(pid)
+            fc_d = fit_forecast(prod_w, 4)
+            next_d = fc_d["forecast"].values[0]
+            last_d = prod_w.values[-1]
+            delta = (next_d - last_d) / last_d * 100
+            month_names = MONTH_NAMES_JA if lang == "ja" else MONTH_NAMES_EN
+            peak_m = SEASONAL_FACTORS[pid].index(max(SEASONAL_FACTORS[pid]))
 
-        st.metric(T["action_demand"],
-                  f"{next_d:.0f} {T['units']}",
-                  delta=f"{delta:+.1f}% {T['vs_last_week']}",
-                  delta_color="normal" if delta >= 0 else "inverse")
-        st.caption(f"{T['peak_month']}: {month_names[peak_m]}")
+            st.metric(
+                T["action_demand"],
+                f"{next_d:.0f} {T['units']}",
+                delta=f"{delta:+.1f}% {T['vs_last_week']}",
+                delta_color="normal" if delta >= 0 else "inverse",
+            )
+            st.caption(f"{T['peak_month']}: {month_names[peak_m]}")
 
-        # 価格
-        opt_d = find_optimal_price(info["base_price"], info["base_demand"]*7,
-                                   info["elasticity"], info["unit_cost"])
-        price_diff = opt_d["optimal_price"] - info["base_price"]
-        profit_imp = opt_d["optimal_profit"] - profit_at_price(
-            info["base_price"], info["base_price"], info["base_demand"]*7,
-            info["elasticity"], info["unit_cost"])
+            opt_d = find_optimal_price(
+                info["base_price"], info["base_demand"] * 7, info["elasticity"], info["unit_cost"]
+            )
+            price_diff = opt_d["optimal_price"] - info["base_price"]
+            profit_imp = opt_d["optimal_profit"] - profit_at_price(
+                info["base_price"], info["base_price"], info["base_demand"] * 7,
+                info["elasticity"], info["unit_cost"]
+            )
 
-        if abs(price_diff) < 0.05:
-            lbl = T["keep_price"]; dc = "off"
-        elif price_diff > 0:
-            lbl = T["raise_price"]; dc = "normal"
-        else:
-            lbl = T["lower_price"]; dc = "inverse"
-
-        st.metric(T["action_price"],
-                  f"${opt_d['optimal_price']:.2f}",
-                  delta=f"{price_diff:+.2f}",
-                  delta_color=dc)
-        st.caption(f"{T['profit_impact']}: ${profit_imp:+.2f}/{'週' if lang=='ja' else 'week'}")
-
-        # 発注
-        inv_key = f"inv_{pid}"
-        if inv_key in st.session_state:
-            order_w1 = st.session_state[inv_key]["result"]["order_qty"][0]
-            if order_w1 > 0:
-                st.metric(T["action_inv"], f"{order_w1} {T['units']}", delta=T["order_now"], delta_color="normal")
+            if abs(price_diff) < 0.05:
+                dc = "off"
+            elif price_diff > 0:
+                dc = "normal"
             else:
-                st.metric(T["action_inv"], "—", delta=T["no_order"], delta_color="off")
-        else:
-            st.caption(f"📦 {T['run_inv_first']}")
+                dc = "inverse"
+
+            st.metric(
+                T["action_price"],
+                f"${opt_d['optimal_price']:.2f}",
+                delta=f"{price_diff:+.2f}",
+                delta_color=dc,
+            )
+            st.caption(f"{T['profit_impact']}: ${profit_imp:+.2f}/{'週' if lang=='ja' else 'week'}")
+
+            inv_key = f"inv_{pid}"
+            if inv_key in st.session_state:
+                order_w1 = st.session_state[inv_key]["result"]["order_qty"][0]
+                if order_w1 > 0:
+                    st.metric(T["action_inv"], f"{order_w1} {T['units']}", delta=T["order_now"], delta_color="normal")
+                else:
+                    st.metric(T["action_inv"], "—", delta=T["no_order"], delta_color="off")
+            else:
+                st.caption(f"📦 {T['run_inv_first']}")
+
+
+render_dashboard()
