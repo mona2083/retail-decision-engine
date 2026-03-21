@@ -16,6 +16,15 @@ from forecasting import fit_forecast, decompose_weekly_patterns
 from pricing import demand_at_price, profit_at_price, find_optimal_price, price_sensitivity_curve
 from inventory import run_inventory_optimization, simple_eoq
 from tft_inference import load_tft_model, predict_dynamic_demand
+import warnings
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.utils.validation")
+warnings.filterwarnings("ignore", category=ConvergenceWarning, module="statsmodels.tsa.holtwinters.model")
+warnings.filterwarnings("ignore", message=".*predict_dataloader.*does not have many workers.*")
+warnings.filterwarnings("ignore", message=".*isinstance.*LeafSpec.*")
+warnings.filterwarnings("ignore", message=".*Attribute 'loss'.*")
+warnings.filterwarnings("ignore", message=".*Attribute 'logging_metrics'.*")
 
 st.set_page_config(page_title="Retail Decision Engine", layout="wide")
 
@@ -212,7 +221,8 @@ with st.sidebar:
     st.divider()
     st.header(T["data_header"])
 
-    data_mode = st.radio("", [T["use_demo"], T["upload_csv"]], label_visibility="collapsed")
+    # アクセシビリティ警告を消すため、空文字ではなくダミーのラベルを設定
+    data_mode = st.radio("Data Source", [T["use_demo"], T["upload_csv"]], label_visibility="collapsed")
 
     if T["use_demo"] in data_mode:
         seed = st.number_input(T["seed"], value=42, step=1)

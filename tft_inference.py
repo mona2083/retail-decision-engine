@@ -48,10 +48,15 @@ def predict_dynamic_demand(
     # 3. 結合と推論の実行
     inference_df = pd.concat([history_df, future_df], ignore_index=True)
     
-    # TFTモデルによる推論（モードを検証モードに固定し、非決定的なドロップアウトを無効化）
+    # TFTモデルによる推論
     model.eval()
     with torch.no_grad():
-        predictions = model.predict(inference_df, mode="raw", return_x=False)
+        predictions = model.predict(
+            inference_df, 
+            mode="raw", 
+            return_x=False,
+            trainer_kwargs={"accelerator": "cpu"}  # 【追加】強制的にCPUを使用させ、MPSのクラッシュを防ぐ
+        )
     
     # 中央値（50パーセンタイル）を予測値として抽出（※QuantileLossのインデックスは学習設定に依存）
     median_pred = predictions["prediction"][0, :, 1].cpu().numpy()  # [batch, time, quantile]
