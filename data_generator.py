@@ -15,6 +15,7 @@ SEASONAL_FACTORS = {
     "oj":    [1.20, 1.15, 1.05, 0.90, 0.80, 0.85, 0.90, 0.95, 1.00, 1.05, 1.10, 1.20],
 }
 
+# ─── 旧バージョン（後方互換性用） ───
 
 def generate_weekly_sales(n_weeks: int = 104, random_state: int = 42) -> pd.DataFrame:
     rng   = np.random.RandomState(random_state)
@@ -38,7 +39,6 @@ def generate_weekly_sales(n_weeks: int = 104, random_state: int = 42) -> pd.Data
             })
     return pd.DataFrame(rows)
 
-
 def generate_daily_sales(n_days: int = 365, random_state: int = 42) -> pd.DataFrame:
     rng   = np.random.RandomState(random_state)
     start = pd.Timestamp("2024-01-01")
@@ -61,3 +61,62 @@ def generate_daily_sales(n_days: int = 365, random_state: int = 42) -> pd.DataFr
                 "weekday":    date.day_name(),
             })
     return pd.DataFrame(rows)
+
+# ─── 新バージョン（TFTモデル・価格弾力性対応） ───
+
+def generate_daily_sales_with_price(n_days: int = 1095, random_state: int = 42) -> pd.DataFrame:
+    """TFTモデル向けに、価格弾力性を反映した日次の需要データを生成する。"""
+    rng = np.random.RandomState(random_state)
+    start_date = pd.Timestamp("2021-01-01")
+    dates = pd.date_range(start_date, periods=n_days, freq="D")
+    
+    rows = []
+    macro_trend = np.linspace(1.0, 1.15, n_days)
+    
+    for product_id, info in PRODUCTS.items():
+        base_demand = info["base_demand"]
+        base_price = info["base_price"]
+        elasticity = info["elasticity"]
+        sf = SEASONAL_FACTORS[product_id]
+        
+        price_changes = rng.choice([0, 1], size=n_days, p=[0.95, 0.05])
+        current_price = base_price
+        
+        for i, date in enumerate(dates):
+            if price_changes[i]:
+                price_multiplier = rng.uniform(0.85, 1.15)
+                current_price = round(base_price * price_multiplier, 2)
+            
+            month = date.month - 1
+            weekday = date.dayofweek
+            
+            season = sf[month]
+            wday = WEEKDAY_FACTORS[weekday]
+            trend = macro_trend[i]
+            
+            # 価格弾力性の適用
+            price_effect = (current_price / base_price) ** elasticity
+            noise = rng.lognormal(mean=0.0, sigma=0.15)
+            
+            raw_sales = base_demand * season * wday * trend * price_effect * noise
+            sales = max(int(np.round(raw_sales)), 0)
+            
+            rows.append({
+                "date": date,
+                "product_id": product_id,
+                "price": current_price,
+                "sales": sales,
+                "weekday": date.day_name(),
+                "month": date.month,
+                "is_weekend": 1 if weekday >= 5 else 0
+            })
+            
+    return pd.DataFrame(rows)
+
+def aggregate_to_weekly(daily_df: pd.DataFrame) -> pd.DataFrame:
+    """日次データを既存のUI向けに週次データに集約する。"""
+    weekly_df = daily_df.groupby([pd.Grouper(key='date', freq='W-MON'), 'product_id']).agg(
+        sales=('sales', 'sum'),
+        price=('price', 'mean')
+    ).reset_index()
+    return weekly_df

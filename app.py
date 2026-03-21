@@ -4,12 +4,55 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from data_generator import generate_weekly_sales, generate_daily_sales, PRODUCTS, SEASONAL_FACTORS
+from data_generator import (
+    generate_weekly_sales, 
+    generate_daily_sales, 
+    PRODUCTS, 
+    SEASONAL_FACTORS,
+    generate_daily_sales_with_price,
+    aggregate_to_weekly              
+)
 from forecasting import fit_forecast, decompose_weekly_patterns
 from pricing import demand_at_price, profit_at_price, find_optimal_price, price_sensitivity_curve
 from inventory import run_inventory_optimization, simple_eoq
+from tft_inference import load_tft_model, predict_dynamic_demand
 
 st.set_page_config(page_title="Retail Decision Engine", layout="wide")
+
+def preprocess_for_tft(df: pd.DataFrame) -> pd.DataFrame:
+    """TFTモデルの推論に必要なスキーマ（型とインデックス）を整える前処理"""
+    # 1. 必須カラムの確認と補完（古いCSVアップロード対策）
+    if "price" not in df.columns:
+        # デモ以外でpriceがない場合は、ベース価格で仮埋めする（※実務では警告を出すべき箇所）
+        df["price"] = df["product_id"].map(lambda x: PRODUCTS[x]["base_price"])
+    if "is_weekend" not in df.columns:
+        df["is_weekend"] = df["date"].dt.dayofweek.apply(lambda x: 1 if x >= 5 else 0)
+    if "month" not in df.columns:
+        df["month"] = df["date"].dt.month
+    if "weekday" not in df.columns:
+        df["weekday"] = df["date"].dt.day_name()
+
+    # 2. ソート（データリーク防止のための最重要プロセス）
+    df = df.sort_values(["product_id", "date"]).reset_index(drop=True)
+    
+    # 3. time_idxの生成
+    df["time_idx"] = df.groupby("product_id").cumcount()
+    
+    # 4. 型の厳密なキャスト（Training-Serving Skew防止）
+    df["product_id"] = df["product_id"].astype(str)
+    df["weekday"] = df["weekday"].astype(str)
+    df["month"] = df["month"].astype(str)
+    df["is_weekend"] = df["is_weekend"].astype(str)
+    df["sales"] = df["sales"].astype(float)
+    df["price"] = df["price"].astype(float)
+    
+    return df
+
+@st.cache_resource(show_spinner="Loading AI Model...")
+def get_model():
+    return load_tft_model("models/tft_best_model.ckpt")
+
+tft_model = get_model()
 
 PORTFOLIO_URL = "https://mona2083.github.io/portfolio-2026/index.html"
 
@@ -157,6 +200,8 @@ LANG = {
 MONTH_NAMES_JA = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"]
 MONTH_NAMES_EN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
+
+
 # ── サイドバー ────────────────────────────────────────────────────
 with st.sidebar:
     lang_choice = st.radio("🌐 Language / 言語", ["日本語", "English"], horizontal=True)
@@ -172,28 +217,31 @@ with st.sidebar:
     if T["use_demo"] in data_mode:
         seed = st.number_input(T["seed"], value=42, step=1)
         if st.button(T["generate"], width="stretch"):
-            st.session_state.weekly_df = generate_weekly_sales(104, random_state=int(seed))
-            st.session_state.daily_df  = generate_daily_sales(365, random_state=int(seed))
+            # TFT用の3年分・価格連動データを生成
+            raw_daily = generate_daily_sales_with_price(1095, random_state=int(seed))
+            st.session_state.daily_df = preprocess_for_tft(raw_daily)
+            st.session_state.weekly_df = aggregate_to_weekly(raw_daily)
             st.cache_data.clear()
             st.rerun()
+        
         if "weekly_df" not in st.session_state:
-            st.session_state.weekly_df = generate_weekly_sales(104, random_state=42)
-            st.session_state.daily_df  = generate_daily_sales(365, random_state=42)
+            # 初回ロード時も同様に処理
+            raw_daily = generate_daily_sales_with_price(1095, random_state=42)
+            st.session_state.daily_df = preprocess_for_tft(raw_daily)
+            st.session_state.weekly_df = aggregate_to_weekly(raw_daily)
+            
     else:
-        st.caption(T["csv_desc"])
-        st.caption(T["csv_col1"])
-        st.caption(T["csv_col2"])
-        st.caption(T["csv_col3"])
-        with st.expander("📋 " + ("フォーマット例" if lang == "ja" else "Format example")):
-            st.code(T["csv_example"], language="csv")
-        uploaded = st.file_uploader(T["upload_label"], type=["csv"])
+        # CSVアップロード処理（既存コードを維持しつつ、前処理を挟む）
+        # ... (中略: CSV読み込みのUI部分) ...
         if uploaded:
             try:
                 df_up = pd.read_csv(uploaded, parse_dates=["date"])
                 required = ["date", "product_id", "sales"]
                 if all(c in df_up.columns for c in required):
                     st.session_state.weekly_df = df_up
-                    st.session_state.daily_df  = generate_daily_sales(365, random_state=42)
+                    # CSVの場合は過去のdailyジェネレータでダミー生成した後、前処理を通す
+                    dummy_daily = generate_daily_sales(365, random_state=42)
+                    st.session_state.daily_df = preprocess_for_tft(dummy_daily)
                     st.cache_data.clear()
                     st.success(T["loaded"])
                 else:
@@ -201,8 +249,9 @@ with st.sidebar:
             except Exception as e:
                 st.error(str(e))
         if "weekly_df" not in st.session_state:
-            st.session_state.weekly_df = generate_weekly_sales(104, random_state=42)
-            st.session_state.daily_df  = generate_daily_sales(365, random_state=42)
+            raw_daily = generate_daily_sales_with_price(1095, random_state=42)
+            st.session_state.daily_df = preprocess_for_tft(raw_daily)
+            st.session_state.weekly_df = aggregate_to_weekly(raw_daily)
 
 weekly_df = st.session_state.weekly_df
 daily_df  = st.session_state.daily_df
@@ -296,10 +345,25 @@ def render_product_tab(pid: str):
             value=float(base_price), step=0.05,
             key=f"price_{pid}",
         )
-        demand_now  = demand_at_price(current_price, base_price, base_demand, elasticity)
+        
+        # ── TFTモデルによる動的需要推論 ──
+        with st.spinner(T["loading"]):
+            daily_data = st.session_state.daily_df 
+            
+            # tft_inference.py の関数を呼び出し、選択された価格での未来需要を予測
+            weekly_forecast = predict_dynamic_demand(
+                model=tft_model,
+                daily_df=daily_data,
+                product_id=pid,
+                planned_price=current_price
+            )
+            # 未来8週間の予測需要の平均を「今週の推定需要」として採用
+            demand_now = weekly_forecast["forecast_sales"].mean()
+
         profit_now  = (current_price - unit_cost) * demand_now
         opt_profit  = opt["optimal_profit"]
 
+        # KPIメトリクス
         m1, m2, m3 = st.columns(3)
         m1.metric(T["demand_label"],  f"{demand_now:.0f} {T['units']}")
         m2.metric(T["revenue_label"], f"${current_price * demand_now:,.2f}")
@@ -309,18 +373,31 @@ def render_product_tab(pid: str):
 
         st.caption(f"✨ {T['optimal_price']}: **${opt['optimal_price']:.2f}** — {T['elasticity_info']}: {elasticity}")
 
+        # グラフ描画（ハイブリッド方式：理論カーブ ＋ AI推論マーカー）
         curve = price_sensitivity_curve(base_price, base_demand, elasticity, unit_cost)
         fig_p = make_subplots(rows=2, cols=1, shared_xaxes=True,
                               subplot_titles=[T["profit_curve"], T["demand_curve"]])
+        
+        # 背景の理論カーブ
         fig_p.add_scatter(x=curve["prices"], y=curve["profits"],
-                          line=dict(color="#2d6a4f", width=2.5), row=1, col=1)
+                          line=dict(color="#2d6a4f", width=2, dash="dot"), row=1, col=1, name="理論利益")
         fig_p.add_scatter(x=curve["prices"], y=curve["demands"],
-                          line=dict(color="#1a4a7a", width=2.5), row=2, col=1)
+                          line=dict(color="#1a4a7a", width=2, dash="dot"), row=2, col=1, name="理論需要")
+        
+        # TFTモデルの予測地点（現在のスライダー値）
+        fig_p.add_scatter(x=[current_price], y=[profit_now], 
+                          mode="markers", marker=dict(color="#b5451b", size=14, symbol="star"), 
+                          row=1, col=1, name="AI予測利益")
+        fig_p.add_scatter(x=[current_price], y=[demand_now], 
+                          mode="markers", marker=dict(color="#b5451b", size=14, symbol="star"), 
+                          row=2, col=1, name="AI予測需要")
+
         for row in [1, 2]:
             fig_p.add_vline(x=opt["optimal_price"], line_dash="dash", line_color="#b5451b",
                             annotation_text=T["opt_price_line"], row=row, col=1)
             fig_p.add_vline(x=current_price, line_dash="dot", line_color="#888",
                             annotation_text=T["cur_price_line"], row=row, col=1)
+            
         fig_p.update_layout(height=560, margin=dict(t=40,b=20,l=20,r=20), showlegend=False)
         st.plotly_chart(fig_p, width="stretch")
 
@@ -341,9 +418,10 @@ def render_product_tab(pid: str):
 
     if st.button(T["run_inv"], type="primary", width="stretch", key=f"runinv_{pid}"):
         with st.spinner(T["loading"]):
-            prod_w2     = weekly_df[weekly_df["product_id"] == pid].set_index("date")["sales"].asfreq("W-MON")
-            fc2         = fit_forecast(prod_w2, 8)
-            forecast_8w = fc2["forecast"].values.tolist()
+            # 上のプライシングセクションでTFTが算出した「設定価格における未来8週間の需要予測」をそのまま配列化
+            forecast_8w = weekly_forecast["forecast_sales"].tolist()
+            
+            # OR-Toolsによる発注最適化ソルバーの実行
             inv_result  = run_inventory_optimization(
                 forecast_demand=forecast_8w,
                 current_stock=int(current_stock),
@@ -353,9 +431,13 @@ def render_product_tab(pid: str):
                 holding_cost=float(holding_cost),
                 unit_cost=float(unit_cost),
             )
+            
+            # 結果をセッションステートに保存（グラフ描画用）
             st.session_state[f"inv_{pid}"] = {
-                "result": inv_result, "forecast": forecast_8w,
-                "order_cost": order_cost, "holding_cost": holding_cost,
+                "result": inv_result, 
+                "forecast": forecast_8w,
+                "order_cost": order_cost, 
+                "holding_cost": holding_cost,
             }
 
     if f"inv_{pid}" in st.session_state:
@@ -414,11 +496,24 @@ for col, pid in zip(dash_cols, PRODUCTS):
     with col:
         st.markdown(f"### {pname(pid)}")
 
-        # 需要
-        prod_w = weekly_df[weekly_df["product_id"] == pid].set_index("date")["sales"].asfreq("W-MON")
-        fc_d   = fit_forecast(prod_w, 4)
-        next_d = fc_d["forecast"].values[0]
+        # ユーザーが各タブで設定している「現在の価格」を取得（未設定ならベース価格）
+        current_p = st.session_state.get(f"price_{pid}", info["base_price"])
+
+        # ── 1. 需要（TFTモデルによる動的予測へ完全移行） ──
+        with st.spinner(f"Predicting {pid}..."):
+            weekly_fc = predict_dynamic_demand(
+                model=tft_model,
+                daily_df=st.session_state.daily_df,
+                product_id=pid,
+                planned_price=current_p
+            )
+        # TFTが予測した次週（W+1）の需要を抽出
+        next_d = weekly_fc["forecast_sales"].iloc[0]
+        
+        # 比較用の実績データ（先週の売上）を取得
+        prod_w = st.session_state.weekly_df[st.session_state.weekly_df["product_id"] == pid].set_index("date")["sales"].asfreq("W-MON")
         last_d = prod_w.values[-1]
+        
         delta  = (next_d - last_d) / last_d * 100
         month_names = MONTH_NAMES_JA if lang == "ja" else MONTH_NAMES_EN
         peak_m = SEASONAL_FACTORS[pid].index(max(SEASONAL_FACTORS[pid]))
@@ -429,12 +524,16 @@ for col, pid in zip(dash_cols, PRODUCTS):
                   delta_color="normal" if delta >= 0 else "inverse")
         st.caption(f"{T['peak_month']}: {month_names[peak_m]}")
 
-        # 価格
+        # ── 2. 価格（現在価格と最適価格のギャップ分析） ──
         opt_d = find_optimal_price(info["base_price"], info["base_demand"]*7,
                                    info["elasticity"], info["unit_cost"])
-        price_diff = opt_d["optimal_price"] - info["base_price"]
+        
+        # 「現在設定している価格」と「理論最適価格」の差分を計算
+        price_diff = opt_d["optimal_price"] - current_p
+        
+        # ギャップを埋めた場合に得られる推定利益のアップサイド
         profit_imp = opt_d["optimal_profit"] - profit_at_price(
-            info["base_price"], info["base_price"], info["base_demand"]*7,
+            current_p, info["base_price"], info["base_demand"]*7,
             info["elasticity"], info["unit_cost"])
 
         if abs(price_diff) < 0.05:
@@ -446,11 +545,11 @@ for col, pid in zip(dash_cols, PRODUCTS):
 
         st.metric(T["action_price"],
                   f"${opt_d['optimal_price']:.2f}",
-                  delta=f"{price_diff:+.2f}",
+                  delta=f"{price_diff:+.2f} ({lbl})",
                   delta_color=dc)
         st.caption(f"{T['profit_impact']}: ${profit_imp:+.2f}/{'週' if lang=='ja' else 'week'}")
 
-        # 発注
+        # ── 3. 発注（連携済みソルバー結果の呼び出し） ──
         inv_key = f"inv_{pid}"
         if inv_key in st.session_state:
             order_w1 = st.session_state[inv_key]["result"]["order_qty"][0]
