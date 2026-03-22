@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# torch より前に（Apple Silicon で MPS 経由の演算が Lightning 読み込みで失敗するのを緩和）
 import os
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -24,12 +23,11 @@ def _disable_mps_for_cpu_inference() -> None:
     if not hasattr(torch.backends, "mps"):
         return
     try:
-        torch.backends.mps.is_available = lambda: False  # type: ignore[method-assign]
+        torch.backends.mps.is_available = lambda: False 
     except Exception:
         pass
 
 
-# Lightning を import する前に MPS を無効扱い（チェックポイント読み込み時の既定デバイス対策）
 _disable_mps_for_cpu_inference()
 
 from pytorch_forecasting import TemporalFusionTransformer
@@ -50,7 +48,6 @@ def _map_storage_to_cpu(storage, location):
     except Exception:
         return storage
 
-# アプリ本体と同じディレクトリ基準（Streamlit Cloud で cwd が違っても .ckpt を探せる）
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
 
@@ -86,7 +83,7 @@ def load_tft_model(
 
     Returns:
         (model, status, detail)
-        - status: ``\"ok\"`` | ``\"missing\"`` | ``\"error\"``
+        - status: ``"ok"`` | ``"missing"`` | ``"error"``
         - detail: 失敗時は絶対パス（missing）またはエラーメッセージ（error）。成功時は空文字。
     """
     path = resolve_tft_checkpoint_path(model_path)
@@ -98,10 +95,9 @@ def load_tft_model(
     _force_default_device_cpu()
 
     try:
-        # 文字列 "cpu" だけだと checkpoint 内の mps/cuda が残る場合があるためコールバックで CPU 固定
         model = TemporalFusionTransformer.load_from_checkpoint(
             str(path),
-            map_location=torch.device("cpu")
+            map_location=_map_storage_to_cpu 
         )
         return model.cpu(), "ok", ""
     except NotImplementedError as exc:
