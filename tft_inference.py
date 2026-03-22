@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import os
+# PyTorch/Lightning が MPS を使おうとするのをブロック
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 import logging
-import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -19,13 +19,12 @@ def _disable_mps_for_cpu_inference() -> None:
         return
     try:
         torch.backends.mps.is_available = lambda: False  # type: ignore[method-assign]
+        torch.backends.mps.is_built = lambda: False      # type: ignore[method-assign]
     except Exception:
         pass
 
-# Lightning を import する前に MPS を無効扱い
 _disable_mps_for_cpu_inference()
 
-import pytorch_forecasting
 from pytorch_forecasting import TemporalFusionTransformer
 
 # ── PyTorch 2.6+ セキュリティアップデート対策 ──
@@ -34,8 +33,10 @@ if hasattr(torch.serialization, "add_safe_globals"):
         from pytorch_forecasting.data.encoders import (
             EncoderNormalizer, GroupNormalizer, NaNLabelEncoder, MultiNormalizer
         )
+        from pytorch_forecasting.metrics import QuantileLoss, MAE, RMSE, MAPE
         torch.serialization.add_safe_globals([
-            EncoderNormalizer, GroupNormalizer, NaNLabelEncoder, MultiNormalizer
+            EncoderNormalizer, GroupNormalizer, NaNLabelEncoder, MultiNormalizer,
+            QuantileLoss, MAE, RMSE, MAPE
         ])
     except Exception:
         pass
@@ -45,13 +46,6 @@ def _force_default_device_cpu() -> None:
         torch.set_default_device("cpu")
     except AttributeError:
         pass
-
-def _map_storage_to_cpu(storage, location):
-    """【最重要】MPSテンソルを強制的にCPUに引きずり下ろすコールバック"""
-    try:
-        return storage.cpu()
-    except Exception:
-        return storage
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -76,24 +70,73 @@ def resolve_tft_checkpoint_path(explicit: str | None = None) -> Path:
 def default_tft_checkpoint_path() -> str:
     return str(resolve_tft_checkpoint_path())
 
-def _sanitize_mps(obj):
-    """hyper_parameters の奥底（Loss関数など）に潜む
-    MPS(Mac GPU)指定のテンソルを見つけ出し、強制的にCPUへ書き換える"""
+def _deep_clean_mps(obj, visited=None):
+    """
+    テンソル、デバイスオブジェクト、文字列の隅々まで探索し、
+    MPS（Mac GPU）の指定を強制的にCPUに置換する完全なクリーナー。
+    """
+    if visited is None:
+        visited = {}
+    
+    obj_id = id(obj)
+    if obj_id in visited:
+        return visited[obj_id]
+
+    # 1. テンソル
     if isinstance(obj, torch.Tensor):
-        return obj.cpu()
+        new_obj = obj.cpu()
+        visited[obj_id] = new_obj
+        return new_obj
+        
+    # 2. デバイスオブジェクト
+    if isinstance(obj, torch.device):
+        if obj.type == 'mps':
+            new_obj = torch.device('cpu')
+            visited[obj_id] = new_obj
+            return new_obj
+        visited[obj_id] = obj
+        return obj
+        
+    # 3. 文字列（"mps" や "mps:0" などを "cpu" に）
+    if isinstance(obj, str):
+        if obj in ['mps', 'mps:0']:
+            return 'cpu'
+        visited[obj_id] = obj
+        return obj
+
+    # 4. 辞書
     if isinstance(obj, dict):
-        return {k: _sanitize_mps(v) for k, v in obj.items()}
+        new_dict = {}
+        visited[obj_id] = new_dict
+        for k, v in obj.items():
+            new_dict[_deep_clean_mps(k, visited)] = _deep_clean_mps(v, visited)
+        return new_dict
+        
+    # 5. リスト
     if isinstance(obj, list):
-        return [_sanitize_mps(v) for v in obj]
+        new_list = []
+        visited[obj_id] = new_list
+        for v in obj:
+            new_list.append(_deep_clean_mps(v, visited))
+        return new_list
+        
+    # 6. タプル
+    if isinstance(obj, tuple):
+        new_tuple = tuple(_deep_clean_mps(v, visited) for v in obj)
+        visited[obj_id] = new_tuple
+        return new_tuple
+
+    # 7. カスタムクラスの内部変数 (__dict__)
     if hasattr(obj, "__dict__"):
-        try:
-            for k, v in vars(obj).items():
-                if isinstance(v, torch.Tensor):
-                    setattr(obj, k, v.cpu())
-                elif isinstance(v, (list, dict)):
-                    setattr(obj, k, _sanitize_mps(v))
-        except Exception:
-            pass
+        visited[obj_id] = obj # 先に登録して無限ループ回避
+        for k, v in list(vars(obj).items()):
+            try:
+                setattr(obj, k, _deep_clean_mps(v, visited))
+            except Exception:
+                pass
+        return obj
+
+    visited[obj_id] = obj
     return obj
 
 def load_tft_model(
@@ -108,41 +151,30 @@ def load_tft_model(
     _force_default_device_cpu()
 
     try:
-        # 1. 【修正】コールバック関数(_map_storage_to_cpu)と、セキュリティ対策(weights_only=False)を両方指定する
+        # 1. PyTorch 2.6対策 (weights_only=False) とラムダによる安全なロード
         ckpt = torch.load(
             path, 
-            map_location=_map_storage_to_cpu,  
+            map_location=lambda storage, loc: storage.cpu(),
             weights_only=False
         )
         
-        # 2. PyTorch Forecasting特有の問題（hparams内のMPS残留）を強制クリーニング
-        if "hyper_parameters" in ckpt:
-            ckpt["hyper_parameters"] = _sanitize_mps(ckpt["hyper_parameters"])
-            
-        # 3. 推論には不要な「学習ステート（MPSエラーの温床）」をモデル内部から完全削除
-        for key in ["optimizer_states", "lr_schedulers", "callbacks", "loops"]:
-            if key in ckpt:
-                del ckpt[key]
+        # 2. パラメータの抽出と究極クリーニング
+        hparams = ckpt.get("hyper_parameters", {})
+        hparams = _deep_clean_mps(hparams)
         
-        # 4. クリーニング済みのデータを「安全な一時チェックポイント」として保存
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".ckpt") as tmp:
-            torch.save(ckpt, tmp.name)
-            safe_ckpt_path = tmp.name
+        # 3. PyTorch Lightningのバグを【完全にバイパス】して直接インスタンス化
+        model = TemporalFusionTransformer(**hparams)
         
-        # 5. 完全にクリーンになった一時ファイルからモデルをロード
-        model = TemporalFusionTransformer.load_from_checkpoint(
-            safe_ckpt_path,
-            map_location=_map_storage_to_cpu,
-            strict=False
-        )
+        # 4. 重み（State Dict）のクリーニングとロード
+        state_dict = ckpt.get("state_dict", {})
+        state_dict = _deep_clean_mps(state_dict)
+        model.load_state_dict(state_dict, strict=False)
         
-        # 6. 用済みのゴミ一時ファイルを削除
-        try:
-            os.remove(safe_ckpt_path)
-        except Exception:
-            pass
+        # 5. 強制的にCPUに固定し、推論モードに
+        model = model.cpu()
+        model.eval()
 
-        return model.cpu(), "ok", ""
+        return model, "ok", ""
     except Exception as exc:
         logger.warning("TFT load failed: %s", exc)
         return None, "error", f"{type(exc).__name__}: {exc}"
