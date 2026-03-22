@@ -29,7 +29,6 @@ import pytorch_forecasting
 from pytorch_forecasting import TemporalFusionTransformer
 
 # ── PyTorch 2.6+ セキュリティアップデート対策 ──
-# pytorch_forecastingのカスタムクラスをロード許可リストに追加
 if hasattr(torch.serialization, "add_safe_globals"):
     try:
         from pytorch_forecasting.data.encoders import (
@@ -41,12 +40,18 @@ if hasattr(torch.serialization, "add_safe_globals"):
     except Exception:
         pass
 
-
 def _force_default_device_cpu() -> None:
     try:
         torch.set_default_device("cpu")
     except AttributeError:
         pass
+
+def _map_storage_to_cpu(storage, location):
+    """【最重要】MPSテンソルを強制的にCPUに引きずり下ろすコールバック"""
+    try:
+        return storage.cpu()
+    except Exception:
+        return storage
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
@@ -103,29 +108,35 @@ def load_tft_model(
     _force_default_device_cpu()
 
     try:
-        # 1. チェックポイントをメモリ上にロード (PyTorch 2.6対策で weights_only=False を指定)
+        # 1. 【修正】コールバック関数(_map_storage_to_cpu)と、セキュリティ対策(weights_only=False)を両方指定する
         ckpt = torch.load(
             path, 
-            map_location=torch.device("cpu"),
-            weights_only=False  # 👈 これを追加
+            map_location=_map_storage_to_cpu,  
+            weights_only=False
         )
         
         # 2. PyTorch Forecasting特有の問題（hparams内のMPS残留）を強制クリーニング
         if "hyper_parameters" in ckpt:
             ckpt["hyper_parameters"] = _sanitize_mps(ckpt["hyper_parameters"])
+            
+        # 3. 推論には不要な「学習ステート（MPSエラーの温床）」をモデル内部から完全削除
+        for key in ["optimizer_states", "lr_schedulers", "callbacks", "loops"]:
+            if key in ckpt:
+                del ckpt[key]
         
-        # 3. クリーニング済みのデータを「安全な一時チェックポイント」として保存
+        # 4. クリーニング済みのデータを「安全な一時チェックポイント」として保存
         with tempfile.NamedTemporaryFile(delete=False, suffix=".ckpt") as tmp:
             torch.save(ckpt, tmp.name)
             safe_ckpt_path = tmp.name
         
-        # 4. 完全にクリーンになった一時ファイルからモデルをロード
+        # 5. 完全にクリーンになった一時ファイルからモデルをロード
         model = TemporalFusionTransformer.load_from_checkpoint(
             safe_ckpt_path,
-            map_location=torch.device("cpu")
+            map_location=_map_storage_to_cpu,
+            strict=False
         )
         
-        # 5. 用済みのゴミ一時ファイルを削除
+        # 6. 用済みのゴミ一時ファイルを削除
         try:
             os.remove(safe_ckpt_path)
         except Exception:
