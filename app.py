@@ -86,12 +86,31 @@ def weekly_demand_forecast_tft_or_fallback(
     ).reset_index()
 
 
+def _unpack_tft_load(raw):
+    """load_tft_model / get_model の戻りを (model, status, detail) に正規化。
+
+    古い tft_inference（モデル単体のみ返す）やデプロイの取り違えで TypeError にならないようにする。
+    """
+    if isinstance(raw, tuple) and len(raw) == 3:
+        return raw[0], raw[1], raw[2]
+    if isinstance(raw, tuple) and len(raw) == 2:
+        return raw[0], raw[1], ""
+    if isinstance(raw, tuple) and len(raw) == 1:
+        m = raw[0]
+        if m is None:
+            return None, "missing", default_tft_checkpoint_path()
+        return m, "ok", ""
+    if raw is None:
+        return None, "missing", default_tft_checkpoint_path()
+    return raw, "ok", ""
+
+
 @st.cache_resource(show_spinner="Loading AI Model...")
 def get_model():
     return load_tft_model()
 
 
-tft_model, tft_load_status, tft_load_detail = get_model()
+tft_model, tft_load_status, tft_load_detail = _unpack_tft_load(get_model())
 
 PORTFOLIO_URL = "https://mona2083.github.io/portfolio-2026/index.html"
 
