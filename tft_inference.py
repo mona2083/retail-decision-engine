@@ -11,9 +11,28 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import torch
-from pytorch_forecasting import TemporalFusionTransformer
 
 logger = logging.getLogger(__name__)
+
+
+def _disable_mps_for_cpu_inference() -> None:
+    """Apple Silicon で Lightning/torchmetrics が MPS 上にテンソルを作ろうとして落ちるのを防ぐ。
+
+    本アプリは CPU 推論のみ。``torch.backends.mps.is_available()`` が False のとき
+    PyTorch / Lightning は CPU パスを選びやすくなる。
+    """
+    if not hasattr(torch.backends, "mps"):
+        return
+    try:
+        torch.backends.mps.is_available = lambda: False  # type: ignore[method-assign]
+    except Exception:
+        pass
+
+
+# Lightning を import する前に MPS を無効扱い（チェックポイント読み込み時の既定デバイス対策）
+_disable_mps_for_cpu_inference()
+
+from pytorch_forecasting import TemporalFusionTransformer
 
 
 def _force_default_device_cpu() -> None:
@@ -75,6 +94,7 @@ def load_tft_model(
         logger.info("TFT checkpoint not found: %s", path)
         return None, "missing", str(path)
 
+    _disable_mps_for_cpu_inference()
     _force_default_device_cpu()
 
     try:

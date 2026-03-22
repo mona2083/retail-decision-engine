@@ -170,7 +170,7 @@ Locally, run `train.py` (or copy a trained `.ckpt`) into `models/tft_best_model.
 
 On some Python / PyTorch / torchmetrics combinations, loading a Lightning checkpoint can fail inside **torchmetrics** during `model.to(device)` with `NotImplementedError`. The app catches this and falls back to the elasticity model.
 
-**Mac (Apple Silicon) + MPS:** If the error mentions **`MPS` backend** / `aten::empty.memory_format`, PyTorch tried to use the Metal backend where some ops are missing. The app sets **`PYTORCH_ENABLE_MPS_FALLBACK`**, uses a **`map_location` callback** to force CPU when reading the checkpoint, and calls **`.cpu()`** on the loaded model. Pull the latest `tft_inference.py` and redeploy.
+**Mac (Apple Silicon) + MPS:** If the error mentions **`MPS` backend** / `aten::empty.memory_format`, PyTorch tried to use the Metal backend where some ops are missing. The app sets **`PYTORCH_ENABLE_MPS_FALLBACK`**, patches **`torch.backends.mps.is_available`** to report `False` before Lightning is imported (so the stack uses CPU), uses a **`map_location` callback** when reading the checkpoint, and calls **`.cpu()`** on the loaded model. Pull the latest `tft_inference.py` and redeploy.
 
 If the sidebar says **missing** (not **error**), the issue is not Python version—it is that the **`.ckpt` is not in the deployed clone**.
 
