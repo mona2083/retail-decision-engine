@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-import logging
+# torch より前に（Apple Silicon で MPS 経由の演算が Lightning 読み込みで失敗するのを緩和）
 import os
+
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
+import logging
 from pathlib import Path
 
 import pandas as pd
@@ -10,6 +14,22 @@ import torch
 from pytorch_forecasting import TemporalFusionTransformer
 
 logger = logging.getLogger(__name__)
+
+
+def _force_default_device_cpu() -> None:
+    """新規テンソルが MPS に流れないよう既定を CPU に（PyTorch 2.1+）。"""
+    try:
+        torch.set_default_device("cpu")
+    except AttributeError:
+        pass
+
+
+def _map_storage_to_cpu(storage, location):
+    """チェックポイント内の cuda:0 / mps:0 等をすべて CPU ストレージへ（map_location 用）。"""
+    try:
+        return storage.cpu()
+    except Exception:
+        return storage
 
 # アプリ本体と同じディレクトリ基準（Streamlit Cloud で cwd が違っても .ckpt を探せる）
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -55,12 +75,15 @@ def load_tft_model(
         logger.info("TFT checkpoint not found: %s", path)
         return None, "missing", str(path)
 
+    _force_default_device_cpu()
+
     try:
+        # 文字列 "cpu" だけだと checkpoint 内の mps/cuda が残る場合があるためコールバックで CPU 固定
         model = TemporalFusionTransformer.load_from_checkpoint(
             str(path),
-            map_location="cpu",
+            map_location=_map_storage_to_cpu,
         )
-        return model, "ok", ""
+        return model.cpu(), "ok", ""
     except NotImplementedError as exc:
         logger.warning("TFT load failed (NotImplementedError): %s", exc)
         return None, "error", f"NotImplementedError: {exc}"

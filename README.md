@@ -146,11 +146,21 @@ Toggle between **English** and **日本語** using the language selector in the 
 
 ## Deploying (Streamlit Cloud) & TFT weights
 
-If the checkpoint is missing at runtime, the app still starts and uses the **price elasticity model** as a fallback. Your `.gitignore` may or may not exclude `models/` — if the file **is** on GitHub but Streamlit still can’t find it, check:
+If the checkpoint is missing at runtime, the app still starts and uses the **price elasticity model** as a fallback.
 
-1. **Branch** — Streamlit Cloud is deploying the same branch that contains `models/tft_best_model.ckpt`.
-2. **Main file path** — In a monorepo, set the app entrypoint to the subfolder that contains `models/` (e.g. `retail-decision-engine/app.py`), not only `app.py` at repo root.
-3. **Git LFS** — If the `.ckpt` is tracked with LFS, confirm GitHub shows the real file (not a tiny pointer only) and that LFS is set up for clones.
+**Sidebar shows `Path: /mount/src/retail-decision-engine/models/tft_best_model.ckpt` but “file not found”?**  
+That path is correct: Streamlit already uses your app folder as the root. The problem is that **the git commit Cloud cloned does not contain that file** (not a wrong path).
+
+Verify:
+
+1. **Same GitHub repo** — The repository in **Streamlit → App settings → Repository** is the same repo where you see `models/tft_best_model.ckpt` (easy to confuse a **monorepo** with a separate **`retail-decision-engine`** repo).
+2. **Branch** — The deployed branch includes the commit that added the `.ckpt`.
+3. **Tracked in git** — From that repo/branch, run:  
+   `git ls-files models/tft_best_model.ckpt`  
+   It must print one line. If it prints nothing, the file was never added to git on that branch.
+4. **Git LFS** — If GitHub shows only a small file (pointer), ensure LFS objects are pushed (`git lfs push --all origin`) and the file is not `.gitignore`’d.
+
+5. **Main file path** — Only if the app lives in a subfolder of a larger repo, set e.g. `retail-decision-engine/app.py` so `models/` sits next to `app.py` in the clone.
 
 You can also set **`TFT_MODEL_PATH`** in Streamlit app settings if the checkpoint lives elsewhere.
 
@@ -160,7 +170,9 @@ Locally, run `train.py` (or copy a trained `.ckpt`) into `models/tft_best_model.
 
 On some Python / PyTorch / torchmetrics combinations, loading a Lightning checkpoint can fail inside **torchmetrics** during `model.to(device)` with `NotImplementedError`. The app catches this and falls back to the elasticity model.
 
-**Python 3.12 alone does not fix a missing file:** if you still see the TFT warning, check the sidebar **Path** line. Most often the `.ckpt` was never pushed to GitHub (`.gitignore` still listing `models/`, or file too large without Git LFS). The app resolves `models/tft_best_model.ckpt` relative to the app directory, so paths are stable on Streamlit Cloud.
+**Mac (Apple Silicon) + MPS:** If the error mentions **`MPS` backend** / `aten::empty.memory_format`, PyTorch tried to use the Metal backend where some ops are missing. The app sets **`PYTORCH_ENABLE_MPS_FALLBACK`**, uses a **`map_location` callback** to force CPU when reading the checkpoint, and calls **`.cpu()`** on the loaded model. Pull the latest `tft_inference.py` and redeploy.
+
+If the sidebar says **missing** (not **error**), the issue is not Python version—it is that the **`.ckpt` is not in the deployed clone**.
 
 ---
 

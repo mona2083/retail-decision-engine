@@ -1,3 +1,8 @@
+import os
+
+# tft_inference より先に torch が import される場合に備え、MPS フォールバックを有効化（Apple Silicon）
+os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -185,8 +190,8 @@ LANG = {
         "csv_example":   "例）date,product_id,sales\n2024-01-01,milk,840\n2024-01-01,bread,630",
         "tft_unavailable_title": "TFT を読み込めませんでした",
         "tft_unavailable_body": "プライシング・発注の「AI予測」は、価格弾力性モデルで近似表示しています。",
-        "tft_missing_hint": "このパスに **ファイルがありません**。GitHub に既に `models/tft_best_model.ckpt` がある場合でも、次を確認してください: (1) Streamlit Cloud の **Branch** が push したブランチと同じか、(2) リポジトリがモノレポでアプリが **サブフォルダ**にあるとき、**Main file path**（例: `retail-decision-engine/app.py`）がそのフォルダをルートとして checkout される設定か、(3) **Git LFS** 利用時は、GitHub 上で数 KB のポインタだけになっていないか（LFS 未設定だと Cloud に実体が届きません）。",
-        "tft_error_hint": "ファイルは見つかりましたが **読み込みに失敗**しました（Python 3.12 指定でも、依存ライブラリの組み合わせで起こり得ます）。下のメッセージを確認してください。",
+        "tft_missing_hint": "**このパスにファイルが無い**＝Streamlit が取得した clone の中に `models/tft_best_model.ckpt` が **含まれていません**（パス解決の誤りではありません）。よくある原因: (1) **別リポジトリの取り違え** — GitHub の画面でファイルを見ているリポジトリと、Streamlit Cloud の **App に紐づいている Repository** が同じか確認（例: モノレポ `portfolio-works` と、単体の `retail-decision-engine` リポジトリは別）。 (2) **ブランチ** — デプロイ中の Branch に、そのファイルを入れたコミットがあるか。 (3) ローカルで **`git ls-files models/tft_best_model.ckpt`** が **1行出るか**（出なければ未追跡）。 (4) GitHub 上のファイルが **数 KB だけ**なら **Git LFS のポインタ**のみで、clone 先に実体が無いことがあります。",
+        "tft_error_hint": "ファイルは見つかりましたが **読み込みに失敗**しました。Mac（Apple Silicon）では **MPS** まわりのエラーが出ることがあります（最新コードは CPU 読み込みを強制）。下のメッセージを確認してください。",
     },
     "en": {
         "title":           "🏪 Retail Decision Engine",
@@ -258,8 +263,8 @@ LANG = {
         "csv_example":   "e.g. date,product_id,sales\n2024-01-01,milk,840\n2024-01-01,bread,630",
         "tft_unavailable_title": "TFT could not be loaded",
         "tft_unavailable_body": "Pricing / order \"AI forecast\" uses the elasticity model as a fallback.",
-        "tft_missing_hint": "**Checkpoint not found** at the path below. If the file is already on GitHub, check: (1) Streamlit **Branch** matches the branch you pushed, (2) for monorepos, **Main file path** points at the folder that contains `models/` (e.g. `retail-decision-engine/app.py`), (3) with **Git LFS**, ensure the real file is stored in LFS (not only a small pointer on GitHub).",
-        "tft_error_hint": "The file was found but **loading failed** (can happen on Python 3.12 depending on torch/torchmetrics). See the message below.",
+        "tft_missing_hint": "**No file at this path** means the cloned commit **does not contain** `models/tft_best_model.ckpt` (path resolution is OK). Common causes: (1) **Wrong repo** — the GitHub repo you browse is not the same as the **Repository** linked in Streamlit Cloud (e.g. monorepo vs standalone `retail-decision-engine`). (2) **Branch** — the deployed branch includes the commit that added the file. (3) Run **`git ls-files models/tft_best_model.ckpt`** locally (must print one line if tracked). (4) If GitHub shows only a **few KB** file, it may be a **Git LFS pointer** without the real blob in the clone.",
+        "tft_error_hint": "The file was found but **loading failed**. On **Mac (Apple Silicon)** you may see **MPS**-related errors; the app forces CPU checkpoint loading. See the message below.",
     },
 }
 
