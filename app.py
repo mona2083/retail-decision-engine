@@ -15,7 +15,7 @@ from data_generator import (
 from forecasting import fit_forecast, decompose_weekly_patterns
 from pricing import demand_at_price, profit_at_price, find_optimal_price, price_sensitivity_curve
 from inventory import run_inventory_optimization, simple_eoq
-from tft_inference import load_tft_model, predict_dynamic_demand
+from tft_inference import default_tft_checkpoint_path, load_tft_model, predict_dynamic_demand
 import warnings
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
@@ -57,9 +57,39 @@ def preprocess_for_tft(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
+
+def weekly_demand_forecast_tft_or_fallback(
+    tft_model,
+    daily_df: pd.DataFrame,
+    product_id: str,
+    planned_price: float,
+    base_price: float,
+    base_demand_weekly: float,
+    elasticity: float,
+) -> pd.DataFrame:
+    """TFT があれば週次予測。無い場合は価格弾力性モデルで同じ列形の DataFrame を返す。"""
+    if tft_model is not None:
+        return predict_dynamic_demand(
+            model=tft_model,
+            daily_df=daily_df,
+            product_id=product_id,
+            planned_price=planned_price,
+        )
+    prod_df = daily_df[daily_df["product_id"] == product_id].copy().sort_values("date")
+    last_date = prod_df["date"].max()
+    weekly_demand = demand_at_price(planned_price, base_price, base_demand_weekly, elasticity)
+    daily_demand = weekly_demand / 7.0
+    future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=56, freq="D")
+    future_df = pd.DataFrame({"date": future_dates, "forecast_sales": daily_demand})
+    return future_df.groupby(pd.Grouper(key="date", freq="W-MON")).agg(
+        forecast_sales=("forecast_sales", "sum")
+    ).reset_index()
+
+
 @st.cache_resource(show_spinner="Loading AI Model...")
 def get_model():
-    return load_tft_model("models/tft_best_model.ckpt")
+    return load_tft_model()
+
 
 tft_model = get_model()
 
@@ -134,6 +164,8 @@ LANG = {
         "csv_col2":      "• product_id：商品ID（milk / bread / oj）",
         "csv_col3":      "• sales：週次売上数量（整数）",
         "csv_example":   "例）date,product_id,sales\n2024-01-01,milk,840\n2024-01-01,bread,630",
+        "tft_unavailable_title": "TFT を読み込めませんでした",
+        "tft_unavailable_body": "プライシング・発注の「AI予測」は、価格弾力性モデルで近似表示しています。チェックポイントが無い、または読み込みに失敗した場合に表示されます。Streamlit Cloud の **Advanced → Python version** で **3.11〜3.12** を指定すると解消することがあります。`models/tft_best_model.ckpt` を同梱するか、環境変数 `TFT_MODEL_PATH` でパスを指定してください。",
     },
     "en": {
         "title":           "🏪 Retail Decision Engine",
@@ -203,6 +235,8 @@ LANG = {
         "csv_col2":      "• product_id: milk / bread / oj",
         "csv_col3":      "• sales: weekly sales quantity (integer)",
         "csv_example":   "e.g. date,product_id,sales\n2024-01-01,milk,840\n2024-01-01,bread,630",
+        "tft_unavailable_title": "TFT could not be loaded",
+        "tft_unavailable_body": "Pricing / order “AI forecast” uses the elasticity model as a fallback. Shown when the checkpoint is missing or load fails (e.g. **NotImplementedError** from torchmetrics on **Python 3.14**). Try **Advanced → Python version → 3.11–3.12** on Streamlit Cloud, or ship `models/tft_best_model.ckpt` / set `TFT_MODEL_PATH`.",
     },
 }
 
@@ -219,6 +253,9 @@ with st.sidebar:
 
     st.link_button(T["portfolio_btn"], PORTFOLIO_URL, width="stretch")
     st.divider()
+    if tft_model is None:
+        st.warning(f"**{T['tft_unavailable_title']}**\n\n{T['tft_unavailable_body']}")
+        st.caption(f"`{default_tft_checkpoint_path()}`")
     st.header(T["data_header"])
 
     # アクセシビリティ警告を消すため、空文字ではなくダミーのラベルを設定
@@ -360,12 +397,14 @@ def render_product_tab(pid: str):
         with st.spinner(T["loading"]):
             daily_data = st.session_state.daily_df 
             
-            # tft_inference.py の関数を呼び出し、選択された価格での未来需要を予測
-            weekly_forecast = predict_dynamic_demand(
-                model=tft_model,
-                daily_df=daily_data,
-                product_id=pid,
-                planned_price=current_price
+            weekly_forecast = weekly_demand_forecast_tft_or_fallback(
+                tft_model,
+                daily_data,
+                pid,
+                current_price,
+                base_price,
+                base_demand,
+                elasticity,
             )
             # 未来8週間の予測需要の平均を「今週の推定需要」として採用
             demand_now = weekly_forecast["forecast_sales"].mean()
@@ -511,11 +550,14 @@ for col, pid in zip(dash_cols, PRODUCTS):
 
         # ── 1. 需要（TFTモデルによる動的予測へ完全移行） ──
         with st.spinner(f"Predicting {pid}..."):
-            weekly_fc = predict_dynamic_demand(
-                model=tft_model,
-                daily_df=st.session_state.daily_df,
-                product_id=pid,
-                planned_price=current_p
+            weekly_fc = weekly_demand_forecast_tft_or_fallback(
+                tft_model,
+                st.session_state.daily_df,
+                pid,
+                current_p,
+                info["base_price"],
+                info["base_demand"] * 7,
+                info["elasticity"],
             )
         # TFTが予測した次週（W+1）の需要を抽出
         next_d = weekly_fc["forecast_sales"].iloc[0]

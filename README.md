@@ -143,6 +143,14 @@ Toggle between **English** and **日本語** using the language selector in the 
 
 ---
 
+## Streamlit Cloud: TFT load errors (`NotImplementedError`)
+
+On **Python 3.14**, loading a Lightning checkpoint can fail inside **torchmetrics** during `model.to(device)` with `NotImplementedError`. The app catches this and falls back to the elasticity model.
+
+To use the real TFT on Cloud, set **Advanced → Python version** to **3.11 or 3.12** (recommended). Ensure `models/tft_best_model.ckpt` is deployed or set **`TFT_MODEL_PATH`**.
+
+---
+
 ## Author
 
 **Manami Oyama** — AI Engineer / Product Manager  
