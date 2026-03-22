@@ -91,7 +91,7 @@ def get_model():
     return load_tft_model()
 
 
-tft_model = get_model()
+tft_model, tft_load_status, tft_load_detail = get_model()
 
 PORTFOLIO_URL = "https://mona2083.github.io/portfolio-2026/index.html"
 
@@ -165,7 +165,9 @@ LANG = {
         "csv_col3":      "• sales：週次売上数量（整数）",
         "csv_example":   "例）date,product_id,sales\n2024-01-01,milk,840\n2024-01-01,bread,630",
         "tft_unavailable_title": "TFT を読み込めませんでした",
-        "tft_unavailable_body": "プライシング・発注の「AI予測」は、価格弾力性モデルで近似表示しています。チェックポイントが無い、または読み込みに失敗した場合に表示されます。Streamlit Cloud の **Advanced → Python version** で **3.11〜3.12** を指定すると解消することがあります。`models/tft_best_model.ckpt` を同梱するか、環境変数 `TFT_MODEL_PATH` でパスを指定してください。",
+        "tft_unavailable_body": "プライシング・発注の「AI予測」は、価格弾力性モデルで近似表示しています。",
+        "tft_missing_hint": "このパスに **ファイルがありません**。GitHub に既に `models/tft_best_model.ckpt` がある場合でも、次を確認してください: (1) Streamlit Cloud の **Branch** が push したブランチと同じか、(2) リポジトリがモノレポでアプリが **サブフォルダ**にあるとき、**Main file path**（例: `retail-decision-engine/app.py`）がそのフォルダをルートとして checkout される設定か、(3) **Git LFS** 利用時は、GitHub 上で数 KB のポインタだけになっていないか（LFS 未設定だと Cloud に実体が届きません）。",
+        "tft_error_hint": "ファイルは見つかりましたが **読み込みに失敗**しました（Python 3.12 指定でも、依存ライブラリの組み合わせで起こり得ます）。下のメッセージを確認してください。",
     },
     "en": {
         "title":           "🏪 Retail Decision Engine",
@@ -236,7 +238,9 @@ LANG = {
         "csv_col3":      "• sales: weekly sales quantity (integer)",
         "csv_example":   "e.g. date,product_id,sales\n2024-01-01,milk,840\n2024-01-01,bread,630",
         "tft_unavailable_title": "TFT could not be loaded",
-        "tft_unavailable_body": "Pricing / order \"AI forecast\" uses the elasticity model as a fallback. Shown when the checkpoint is missing or load fails (e.g. **NotImplementedError** from torchmetrics on **Python 3.14**). Try **Advanced → Python version → 3.11–3.12** on Streamlit Cloud, or ship `models/tft_best_model.ckpt` / set `TFT_MODEL_PATH`.",
+        "tft_unavailable_body": "Pricing / order \"AI forecast\" uses the elasticity model as a fallback.",
+        "tft_missing_hint": "**Checkpoint not found** at the path below. If the file is already on GitHub, check: (1) Streamlit **Branch** matches the branch you pushed, (2) for monorepos, **Main file path** points at the folder that contains `models/` (e.g. `retail-decision-engine/app.py`), (3) with **Git LFS**, ensure the real file is stored in LFS (not only a small pointer on GitHub).",
+        "tft_error_hint": "The file was found but **loading failed** (can happen on Python 3.12 depending on torch/torchmetrics). See the message below.",
     },
 }
 
@@ -255,7 +259,13 @@ with st.sidebar:
     st.divider()
     if tft_model is None:
         st.warning(f"**{T['tft_unavailable_title']}**\n\n{T['tft_unavailable_body']}")
-        st.caption(f"`{default_tft_checkpoint_path()}`")
+        if tft_load_status == "missing":
+            st.info(T["tft_missing_hint"])
+            st.caption(f"**Path:** `{tft_load_detail}`")
+        elif tft_load_status == "error":
+            st.info(T["tft_error_hint"])
+            st.code(tft_load_detail[:2000] if tft_load_detail else "(no detail)")
+        st.caption(f"**Resolved:** `{default_tft_checkpoint_path()}`")
     st.header(T["data_header"])
 
     # アクセシビリティ警告を消すため、空文字ではなくダミーのラベルを設定

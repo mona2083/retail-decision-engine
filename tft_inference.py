@@ -11,36 +11,62 @@ from pytorch_forecasting import TemporalFusionTransformer
 
 logger = logging.getLogger(__name__)
 
+# アプリ本体と同じディレクトリ基準（Streamlit Cloud で cwd が違っても .ckpt を探せる）
+_PACKAGE_DIR = Path(__file__).resolve().parent
+
+
+def resolve_tft_checkpoint_path(explicit: str | None = None) -> Path:
+    """チェックポイントの絶対パス。相対パスは `tft_inference.py` があるディレクトリ基準で解決。"""
+    if explicit:
+        p = Path(explicit)
+        if not p.is_absolute():
+            p = (_PACKAGE_DIR / p).resolve()
+        else:
+            p = p.resolve()
+        return p
+    env = os.environ.get("TFT_MODEL_PATH")
+    if env:
+        p = Path(env)
+        if not p.is_absolute():
+            p = (_PACKAGE_DIR / p).resolve()
+        else:
+            p = p.resolve()
+        return p
+    return (_PACKAGE_DIR / "models" / "tft_best_model.ckpt").resolve()
+
 
 def default_tft_checkpoint_path() -> str:
-    """環境変数 TFT_MODEL_PATH があれば優先（Streamlit Cloud 等でアーティファクトを別パスに置く用）。"""
-    return os.environ.get("TFT_MODEL_PATH", "models/tft_best_model.ckpt")
+    """UI 表示用。環境変数 TFT_MODEL_PATH または既定の `models/tft_best_model.ckpt`（絶対パス化）。"""
+    return str(resolve_tft_checkpoint_path())
 
 
-def load_tft_model(model_path: str | None = None) -> TemporalFusionTransformer | None:
-    """モデルをロード。ファイルが無い・読み込み失敗時は None（アプリは弾力性モデルにフォールバック）。
+def load_tft_model(
+    model_path: str | None = None,
+) -> tuple[TemporalFusionTransformer | None, str, str]:
+    """モデルをロード。
 
-    Streamlit Cloud の Python 3.14 等では、Lightning の ``model.to(device)`` 内で
-    torchmetrics が NotImplementedError を出すことがあるため、例外は握りつぶして None を返す。
+    Returns:
+        (model, status, detail)
+        - status: ``\"ok\"`` | ``\"missing\"`` | ``\"error\"``
+        - detail: 失敗時は絶対パス（missing）またはエラーメッセージ（error）。成功時は空文字。
     """
-    path = model_path or default_tft_checkpoint_path()
-    if not Path(path).is_file():
+    path = resolve_tft_checkpoint_path(model_path)
+    if not path.is_file():
         logger.info("TFT checkpoint not found: %s", path)
-        return None
+        return None, "missing", str(path)
+
     try:
-        return TemporalFusionTransformer.load_from_checkpoint(
-            path,
+        model = TemporalFusionTransformer.load_from_checkpoint(
+            str(path),
             map_location="cpu",
         )
+        return model, "ok", ""
     except NotImplementedError as exc:
-        logger.warning(
-            "TFT load failed (NotImplementedError — try Python 3.11–3.12 on Streamlit Cloud): %s",
-            exc,
-        )
-        return None
+        logger.warning("TFT load failed (NotImplementedError): %s", exc)
+        return None, "error", f"NotImplementedError: {exc}"
     except Exception as exc:
         logger.warning("TFT load failed: %s", exc)
-        return None
+        return None, "error", f"{type(exc).__name__}: {exc}"
 
 
 def predict_dynamic_demand(

@@ -146,20 +146,21 @@ Toggle between **English** and **日本語** using the language selector in the 
 
 ## Deploying (Streamlit Cloud) & TFT weights
 
-The repo’s `.gitignore` excludes `models/`, so **`models/tft_best_model.ckpt` is not on GitHub by default**. If the checkpoint is missing at runtime, the app **starts successfully** and uses the **price elasticity model** (`demand_at_price`) as a fallback for the TFT-driven “AI forecast” paths (pricing, inventory, dashboard).
+If the checkpoint is missing at runtime, the app still starts and uses the **price elasticity model** as a fallback. Your `.gitignore` may or may not exclude `models/` — if the file **is** on GitHub but Streamlit still can’t find it, check:
 
-To ship the real TFT on Cloud:
+1. **Branch** — Streamlit Cloud is deploying the same branch that contains `models/tft_best_model.ckpt`.
+2. **Main file path** — In a monorepo, set the app entrypoint to the subfolder that contains `models/` (e.g. `retail-decision-engine/app.py`), not only `app.py` at repo root.
+3. **Git LFS** — If the `.ckpt` is tracked with LFS, confirm GitHub shows the real file (not a tiny pointer only) and that LFS is set up for clones.
 
-1. **Commit the checkpoint** (remove `models/` from `.gitignore` for that file, or use **Git LFS** for large `.ckpt` files), **or**
-2. Set the **`TFT_MODEL_PATH`** environment variable in the Streamlit app settings.
+You can also set **`TFT_MODEL_PATH`** in Streamlit app settings if the checkpoint lives elsewhere.
 
 Locally, run `train.py` (or copy a trained `.ckpt`) into `models/tft_best_model.ckpt`.
 
 ### TFT load errors (`NotImplementedError`)
 
-On **Python 3.14**, loading a Lightning checkpoint can fail inside **torchmetrics** during `model.to(device)` with `NotImplementedError`. The app catches this and falls back to the elasticity model.
+On some Python / PyTorch / torchmetrics combinations, loading a Lightning checkpoint can fail inside **torchmetrics** during `model.to(device)` with `NotImplementedError`. The app catches this and falls back to the elasticity model.
 
-To use the real TFT on Cloud, set **Advanced → Python version** to **3.11 or 3.12** (recommended).
+**Python 3.12 alone does not fix a missing file:** if you still see the TFT warning, check the sidebar **Path** line. Most often the `.ckpt` was never pushed to GitHub (`.gitignore` still listing `models/`, or file too large without Git LFS). The app resolves `models/tft_best_model.ckpt` relative to the app directory, so paths are stable on Streamlit Cloud.
 
 ---
 
