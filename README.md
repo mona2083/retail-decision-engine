@@ -143,6 +143,19 @@ Toggle between **English** and **日本語** using the language selector in the 
 
 ---
 
+## Deploying (Streamlit Cloud) & TFT weights
+
+The repo’s `.gitignore` excludes `models/`, so **`models/tft_best_model.ckpt` is not on GitHub by default**. If the checkpoint is missing at runtime, the app **starts successfully** and uses the **price elasticity model** (`demand_at_price`) as a fallback for the TFT-driven “AI forecast” paths (pricing, inventory, dashboard).
+
+To ship the real TFT on Cloud:
+
+1. **Commit the checkpoint** (remove `models/` from `.gitignore` for that file, or use **Git LFS** for large `.ckpt` files), **or**
+2. Set the **`TFT_MODEL_PATH`** environment variable in the Streamlit app settings to an absolute path or URL your host can read (if you host the file elsewhere).
+
+Locally, run `train.py` (or copy a trained `.ckpt`) into `models/tft_best_model.ckpt`.
+
+---
+
 ## Author
 
 **Manami Oyama** — AI Engineer / Product Manager  

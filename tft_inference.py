@@ -1,17 +1,34 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 import torch
 from pytorch_forecasting import TemporalFusionTransformer
 
-def load_tft_model(model_path: str = "models/tft_best_model.ckpt") -> TemporalFusionTransformer:
-    """モデルをロード。推論時のオーバーヘッドを防ぐため明示的にCPUにマッピング。"""
+
+def default_tft_checkpoint_path() -> str:
+    """環境変数 TFT_MODEL_PATH があれば優先（Streamlit Cloud 等でアーティファクトを別パスに置く用）。"""
+    return os.environ.get("TFT_MODEL_PATH", "models/tft_best_model.ckpt")
+
+
+def load_tft_model(model_path: str | None = None) -> TemporalFusionTransformer | None:
+    """モデルをロード。推論時のオーバーヘッドを防ぐため明示的にCPUにマッピング。
+
+    ファイルが無い場合は None（デプロイ先に .ckpt が含まれない場合のクラッシュ回避）。
+    """
+    path = model_path or default_tft_checkpoint_path()
+    if not Path(path).is_file():
+        return None
     return TemporalFusionTransformer.load_from_checkpoint(
-        model_path, 
-        map_location=torch.device("cpu")
+        path,
+        map_location=torch.device("cpu"),
     )
 
 def predict_dynamic_demand(
-    model: TemporalFusionTransformer, 
+    model: TemporalFusionTransformer,
     daily_df: pd.DataFrame, 
     product_id: str, 
     planned_price: float, 
