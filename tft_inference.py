@@ -100,7 +100,7 @@ def load_tft_model(
     try:
         # 文字列 "cpu" だけだと checkpoint 内の mps/cuda が残る場合があるためコールバックで CPU 固定
         model = TemporalFusionTransformer.load_from_checkpoint(
-            checkpoint_path,
+            str(path),
             map_location=torch.device("cpu")
         )
         return model.cpu(), "ok", ""
