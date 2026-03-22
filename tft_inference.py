@@ -25,7 +25,22 @@ def _disable_mps_for_cpu_inference() -> None:
 # Lightning を import する前に MPS を無効扱い
 _disable_mps_for_cpu_inference()
 
+import pytorch_forecasting
 from pytorch_forecasting import TemporalFusionTransformer
+
+# ── PyTorch 2.6+ セキュリティアップデート対策 ──
+# pytorch_forecastingのカスタムクラスをロード許可リストに追加
+if hasattr(torch.serialization, "add_safe_globals"):
+    try:
+        from pytorch_forecasting.data.encoders import (
+            EncoderNormalizer, GroupNormalizer, NaNLabelEncoder, MultiNormalizer
+        )
+        torch.serialization.add_safe_globals([
+            EncoderNormalizer, GroupNormalizer, NaNLabelEncoder, MultiNormalizer
+        ])
+    except Exception:
+        pass
+
 
 def _force_default_device_cpu() -> None:
     try:
@@ -57,10 +72,8 @@ def default_tft_checkpoint_path() -> str:
     return str(resolve_tft_checkpoint_path())
 
 def _sanitize_mps(obj):
-    """
-    【重要パッチ】hyper_parameters の奥底（Loss関数など）に潜む
-    MPS(Mac GPU)指定のテンソルを見つけ出し、強制的にCPUへ書き換える
-    """
+    """hyper_parameters の奥底（Loss関数など）に潜む
+    MPS(Mac GPU)指定のテンソルを見つけ出し、強制的にCPUへ書き換える"""
     if isinstance(obj, torch.Tensor):
         return obj.cpu()
     if isinstance(obj, dict):
@@ -90,8 +103,12 @@ def load_tft_model(
     _force_default_device_cpu()
 
     try:
-        # 1. まず標準の機能でチェックポイントをメモリ上にロード
-        ckpt = torch.load(path, map_location=torch.device("cpu"))
+        # 1. チェックポイントをメモリ上にロード (PyTorch 2.6対策で weights_only=False を指定)
+        ckpt = torch.load(
+            path, 
+            map_location=torch.device("cpu"),
+            weights_only=False  # 👈 これを追加
+        )
         
         # 2. PyTorch Forecasting特有の問題（hparams内のMPS残留）を強制クリーニング
         if "hyper_parameters" in ckpt:
