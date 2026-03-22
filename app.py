@@ -14,8 +14,8 @@ from data_generator import (
 )
 from forecasting import fit_forecast, decompose_weekly_patterns
 from pricing import demand_at_price, profit_at_price, find_optimal_price, price_sensitivity_curve
-from inventory import run_inventory_optimization, simple_eoq
 from tft_inference import default_tft_checkpoint_path, load_tft_model, predict_dynamic_demand
+from inventory import run_inventory_optimization, simple_eoq
 import warnings
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
@@ -67,7 +67,7 @@ def weekly_demand_forecast_tft_or_fallback(
     base_demand_weekly: float,
     elasticity: float,
 ) -> pd.DataFrame:
-    """TFT があれば週次予測。無い場合は価格弾力性モデルで同じ列形の DataFrame を返す。"""
+    """TFT があれば週次予測。無い場合（未同梱・読み込み失敗）は価格弾力性モデルで同じ列形の DataFrame を返す。"""
     if tft_model is not None:
         return predict_dynamic_demand(
             model=tft_model,
@@ -79,7 +79,7 @@ def weekly_demand_forecast_tft_or_fallback(
     last_date = prod_df["date"].max()
     weekly_demand = demand_at_price(planned_price, base_price, base_demand_weekly, elasticity)
     daily_demand = weekly_demand / 7.0
-    future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=56, freq="D")
+    future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=56, freq="1D")
     future_df = pd.DataFrame({"date": future_dates, "forecast_sales": daily_demand})
     return future_df.groupby(pd.Grouper(key="date", freq="W-MON")).agg(
         forecast_sales=("forecast_sales", "sum")
@@ -236,7 +236,7 @@ LANG = {
         "csv_col3":      "• sales: weekly sales quantity (integer)",
         "csv_example":   "e.g. date,product_id,sales\n2024-01-01,milk,840\n2024-01-01,bread,630",
         "tft_unavailable_title": "TFT could not be loaded",
-        "tft_unavailable_body": "Pricing / order “AI forecast” uses the elasticity model as a fallback. Shown when the checkpoint is missing or load fails (e.g. **NotImplementedError** from torchmetrics on **Python 3.14**). Try **Advanced → Python version → 3.11–3.12** on Streamlit Cloud, or ship `models/tft_best_model.ckpt` / set `TFT_MODEL_PATH`.",
+        "tft_unavailable_body": "Pricing / order \"AI forecast\" uses the elasticity model as a fallback. Shown when the checkpoint is missing or load fails (e.g. **NotImplementedError** from torchmetrics on **Python 3.14**). Try **Advanced → Python version → 3.11–3.12** on Streamlit Cloud, or ship `models/tft_best_model.ckpt` / set `TFT_MODEL_PATH`.",
     },
 }
 

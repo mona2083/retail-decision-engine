@@ -42,7 +42,7 @@ def generate_weekly_sales(n_weeks: int = 104, random_state: int = 42) -> pd.Data
 def generate_daily_sales(n_days: int = 365, random_state: int = 42) -> pd.DataFrame:
     rng   = np.random.RandomState(random_state)
     start = pd.Timestamp("2024-01-01")
-    dates = pd.date_range(start, periods=n_days, freq="D")
+    dates = pd.date_range(start, periods=n_days, freq="1D")
     rows  = []
     for product_id, info in PRODUCTS.items():
         base = info["base_demand"]
@@ -68,7 +68,7 @@ def generate_daily_sales_with_price(n_days: int = 1095, random_state: int = 42) 
     """TFTモデル向けに、価格弾力性を反映した日次の需要データを生成する。"""
     rng = np.random.RandomState(random_state)
     start_date = pd.Timestamp("2021-01-01")
-    dates = pd.date_range(start_date, periods=n_days, freq="D")
+    dates = pd.date_range(start_date, periods=n_days, freq="1D")
     
     rows = []
     macro_trend = np.linspace(1.0, 1.15, n_days)

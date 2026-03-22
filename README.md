@@ -8,7 +8,7 @@ A Streamlit app that combines Deep Learning and Mathematical Optimization models
 
 ## Live Demo
 
-🔗 [Open App](https://retail-decision-engine-4h8ohlz3u2zz5tvzkubhh2.streamlit.app/) 
+🔗 [Open App](https://retail-decision-engine-4h8ohlz3u2zz5tvzkubhh2.streamlit.app/)
 
 ---
 
@@ -62,6 +62,7 @@ retail-decision-engine/
 ├── pricing.py          # Price elasticity + SciPy optimization
 ├── inventory.py        # OR-Tools CP-SAT inventory planner
 ├── models/             # Directory containing trained .ckpt model weights
+├── .streamlit/         # Theme & optional Streamlit settings (Cloud picks these up)
 ├── requirements.txt
 └── .gitignore
 ```
@@ -77,7 +78,7 @@ retail-decision-engine/
 ### Installation
 
 ```bash
-git clone [https://github.com/mona2083/retail-decision-engine.git](https://github.com/mona2083/retail-decision-engine.git)
+git clone https://github.com/mona2083/retail-decision-engine.git
 cd retail-decision-engine
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
@@ -143,11 +144,22 @@ Toggle between **English** and **日本語** using the language selector in the 
 
 ---
 
-## Streamlit Cloud: TFT load errors (`NotImplementedError`)
+## Deploying (Streamlit Cloud) & TFT weights
+
+The repo’s `.gitignore` excludes `models/`, so **`models/tft_best_model.ckpt` is not on GitHub by default**. If the checkpoint is missing at runtime, the app **starts successfully** and uses the **price elasticity model** (`demand_at_price`) as a fallback for the TFT-driven “AI forecast” paths (pricing, inventory, dashboard).
+
+To ship the real TFT on Cloud:
+
+1. **Commit the checkpoint** (remove `models/` from `.gitignore` for that file, or use **Git LFS** for large `.ckpt` files), **or**
+2. Set the **`TFT_MODEL_PATH`** environment variable in the Streamlit app settings.
+
+Locally, run `train.py` (or copy a trained `.ckpt`) into `models/tft_best_model.ckpt`.
+
+### TFT load errors (`NotImplementedError`)
 
 On **Python 3.14**, loading a Lightning checkpoint can fail inside **torchmetrics** during `model.to(device)` with `NotImplementedError`. The app catches this and falls back to the elasticity model.
 
-To use the real TFT on Cloud, set **Advanced → Python version** to **3.11 or 3.12** (recommended). Ensure `models/tft_best_model.ckpt` is deployed or set **`TFT_MODEL_PATH`**.
+To use the real TFT on Cloud, set **Advanced → Python version** to **3.11 or 3.12** (recommended).
 
 ---
 
