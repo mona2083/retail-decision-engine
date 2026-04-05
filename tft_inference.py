@@ -4,6 +4,7 @@ import os
 # PyTorch/Lightning が MPS を使おうとするのをブロック
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
+import inspect
 import logging
 from pathlib import Path
 
@@ -161,9 +162,26 @@ def load_tft_model(
         # 2. パラメータの抽出と究極クリーニング
         hparams = ckpt.get("hyper_parameters", {})
         hparams = _deep_clean_mps(hparams)
+        dataset_parameters = ckpt.get("dataset_parameters") or hparams.get("dataset_parameters")
+
+        # 版差分で衝突する既知キーを除去
+        hparams.pop("monotone_constraints", None)
+
+        # 現在のTFT実装が受け取れる引数だけ残す
+        allowed = set(inspect.signature(TemporalFusionTransformer.__init__).parameters)
+        hparams = {k: v for k, v in hparams.items() if k in allowed}
         
         # 3. PyTorch Lightningのバグを【完全にバイパス】して直接インスタンス化
         model = TemporalFusionTransformer(**hparams)
+
+        # 3.5 predict() に必要な dataset_parameters を復元
+        if dataset_parameters is not None:
+            dataset_parameters = _deep_clean_mps(dataset_parameters)
+            model.dataset_parameters = dataset_parameters
+        else:
+            msg = "TFT checkpoint missing dataset_parameters; fallback mode enabled"
+            logger.warning(msg)
+            return None, "error", msg
         
         # 4. 重み（State Dict）のクリーニングとロード
         state_dict = ckpt.get("state_dict", {})
@@ -187,6 +205,9 @@ def predict_dynamic_demand(
     encoder_days: int = 90,
     decoder_days: int = 56,
 ) -> pd.DataFrame:
+    if getattr(model, "dataset_parameters", None) is None:
+        raise ValueError("TFT model has no dataset_parameters for predict()")
+
     
     prod_df = daily_df[daily_df["product_id"] == product_id].copy()
     prod_df = prod_df.sort_values("date").reset_index(drop=True)

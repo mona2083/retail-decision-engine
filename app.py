@@ -6,6 +6,7 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 import streamlit as st
 import pandas as pd
 import numpy as np
+import logging
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -30,6 +31,8 @@ warnings.filterwarnings("ignore", message=".*predict_dataloader.*does not have m
 warnings.filterwarnings("ignore", message=".*isinstance.*LeafSpec.*")
 warnings.filterwarnings("ignore", message=".*Attribute 'loss'.*")
 warnings.filterwarnings("ignore", message=".*Attribute 'logging_metrics'.*")
+
+logger = logging.getLogger(__name__)
 
 st.set_page_config(page_title="Retail Decision Engine", layout="wide")
 
@@ -71,24 +74,33 @@ def weekly_demand_forecast_tft_or_fallback(
     base_price: float,
     base_demand_weekly: float,
     elasticity: float,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, bool]:
     """TFT があれば週次予測。無い場合（未同梱・読み込み失敗）は価格弾力性モデルで同じ列形の DataFrame を返す。"""
+    def _fallback_forecast() -> pd.DataFrame:
+        prod_df = daily_df[daily_df["product_id"] == product_id].copy().sort_values("date")
+        last_date = prod_df["date"].max() if not prod_df.empty else pd.Timestamp.today().normalize()
+        weekly_demand = demand_at_price(planned_price, base_price, base_demand_weekly, elasticity)
+        daily_demand = weekly_demand / 7.0
+        future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=56, freq="1D")
+        future_df = pd.DataFrame({"date": future_dates, "forecast_sales": daily_demand})
+        return future_df.groupby(pd.Grouper(key="date", freq="W-MON")).agg(
+            forecast_sales=("forecast_sales", "sum")
+        ).reset_index()
+
     if tft_model is not None:
-        return predict_dynamic_demand(
-            model=tft_model,
-            daily_df=daily_df,
-            product_id=product_id,
-            planned_price=planned_price,
-        )
-    prod_df = daily_df[daily_df["product_id"] == product_id].copy().sort_values("date")
-    last_date = prod_df["date"].max()
-    weekly_demand = demand_at_price(planned_price, base_price, base_demand_weekly, elasticity)
-    daily_demand = weekly_demand / 7.0
-    future_dates = pd.date_range(last_date + pd.Timedelta(days=1), periods=56, freq="1D")
-    future_df = pd.DataFrame({"date": future_dates, "forecast_sales": daily_demand})
-    return future_df.groupby(pd.Grouper(key="date", freq="W-MON")).agg(
-        forecast_sales=("forecast_sales", "sum")
-    ).reset_index()
+        try:
+            return predict_dynamic_demand(
+                model=tft_model,
+                daily_df=daily_df,
+                product_id=product_id,
+                planned_price=planned_price,
+            ), False
+        except Exception as exc:
+            logged_failures = st.session_state.setdefault("logged_tft_failures", set())
+            if product_id not in logged_failures:
+                logger.warning("TFT inference failed for %s: %s: %s", product_id, type(exc).__name__, exc)
+                logged_failures.add(product_id)
+    return _fallback_forecast(), True
 
 
 def _unpack_tft_load(raw):
@@ -192,6 +204,7 @@ LANG = {
         "tft_unavailable_body": "プライシング・発注の「AI予測」は、価格弾力性モデルで近似表示しています。",
         "tft_missing_hint": "**このパスにファイルが無い**＝Streamlit が取得した clone の中に `models/tft_best_model.ckpt` が **含まれていません**（パス解決の誤りではありません）。よくある原因: (1) **別リポジトリの取り違え** — GitHub の画面でファイルを見ているリポジトリと、Streamlit Cloud の **App に紐づいている Repository** が同じか確認（例: モノレポ `portfolio-works` と、単体の `retail-decision-engine` リポジトリは別）。 (2) **ブランチ** — デプロイ中の Branch に、そのファイルを入れたコミットがあるか。 (3) ローカルで **`git ls-files models/tft_best_model.ckpt`** が **1行出るか**（出なければ未追跡）。 (4) GitHub 上のファイルが **数 KB だけ**なら **Git LFS のポインタ**のみで、clone 先に実体が無いことがあります。",
         "tft_error_hint": "ファイルは見つかりましたが **読み込みに失敗**しました。Mac（Apple Silicon）では **MPS** まわりのエラーが出ることがあります（最新コードは CPU 読み込みを強制）。下のメッセージを確認してください。",
+        "tft_runtime_fallback": "⚠️ TFT推論が利用できないため、価格弾力性モデルで近似予測を表示しています。",
     },
     "en": {
         "title":           "🏪 Retail Decision Engine",
@@ -265,6 +278,7 @@ LANG = {
         "tft_unavailable_body": "Pricing / order \"AI forecast\" uses the elasticity model as a fallback.",
         "tft_missing_hint": "**No file at this path** means the cloned commit **does not contain** `models/tft_best_model.ckpt` (path resolution is OK). Common causes: (1) **Wrong repo** — the GitHub repo you browse is not the same as the **Repository** linked in Streamlit Cloud (e.g. monorepo vs standalone `retail-decision-engine`). (2) **Branch** — the deployed branch includes the commit that added the file. (3) Run **`git ls-files models/tft_best_model.ckpt`** locally (must print one line if tracked). (4) If GitHub shows only a **few KB** file, it may be a **Git LFS pointer** without the real blob in the clone.",
         "tft_error_hint": "The file was found but **loading failed**. On **Mac (Apple Silicon)** you may see **MPS**-related errors; the app forces CPU checkpoint loading. See the message below.",
+        "tft_runtime_fallback": "⚠️ TFT inference is unavailable, so this view is using the price-elasticity fallback forecast.",
     },
 }
 
@@ -440,8 +454,12 @@ def render_product_tab(pid: str):
                 base_demand,
                 elasticity,
             )
+            weekly_forecast, used_fallback = weekly_forecast
             # 未来8週間の予測需要の平均を「今週の推定需要」として採用
             demand_now = weekly_forecast["forecast_sales"].mean()
+
+        if used_fallback:
+            st.warning(T["tft_runtime_fallback"])
 
         profit_now  = (current_price - unit_cost) * demand_now
         opt_profit  = opt["optimal_profit"]
@@ -574,6 +592,7 @@ st.header(T["section_dashboard"])
 st.caption(T["dashboard_caption"])
 
 dash_cols = st.columns(len(PRODUCTS))
+dashboard_fallback_used = False
 for col, pid in zip(dash_cols, PRODUCTS):
     info  = PRODUCTS[pid]
     with col:
@@ -593,6 +612,8 @@ for col, pid in zip(dash_cols, PRODUCTS):
                 info["base_demand"] * 7,
                 info["elasticity"],
             )
+            weekly_fc, used_fallback = weekly_fc
+            dashboard_fallback_used = dashboard_fallback_used or used_fallback
         # TFTが予測した次週（W+1）の需要を抽出
         next_d = weekly_fc["forecast_sales"].iloc[0]
         
@@ -645,3 +666,6 @@ for col, pid in zip(dash_cols, PRODUCTS):
                 st.metric(T["action_inv"], "—", delta=T["no_order"], delta_color="off")
         else:
             st.caption(f"📦 {T['run_inv_first']}")
+
+if dashboard_fallback_used:
+    st.info(T["tft_runtime_fallback"])

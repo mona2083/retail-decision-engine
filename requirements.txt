@@ -7,6 +7,6 @@ statsmodels
 ortools
 torch>=2.0.0
 lightning>=2.0.0
-pytorch-forecasting>=1.0.0
+pytorch-forecasting==1.0.0
 # Pin transitive dep: avoids some torchmetrics / Lightning edge cases on very new Python
 torchmetrics>=1.4.0,<3.0.0
