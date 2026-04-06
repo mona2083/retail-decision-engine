@@ -1,12 +1,30 @@
-streamlit>=1.33.0
-pandas
-numpy==1.26.4
-plotly
-scipy
-statsmodels
-ortools
-torch>=2.0.0
-lightning>=2.0.0
-pytorch-forecasting==1.0.0
-# Pin transitive dep: avoids some torchmetrics / Lightning edge cases on very new Python
-torchmetrics>=1.4.0,<3.0.0
+# streamlit>=1.33.0
+# pandas
+# numpy==1.26.4
+# plotly
+# scipy
+# statsmodels
+# ortools
+# torch>=2.0.0
+# lightning>=2.0.0
+# pytorch-forecasting==1.0.0
+# # Pin transitive dep: avoids some torchmetrics / Lightning edge cases on very new Python
+# torchmetrics>=1.4.0,<3.0.0
+
+numpy==2.4.3
+pandas==2.3.3
+scipy==1.17.1
+statsmodels==0.14.6
+plotly==6.6.0
+streamlit==1.55.0
+torch==2.10.0
+pytorch-forecasting==1.6.1
+pytorch-lightning==2.6.1
+ortools==9.15.6755
+scikit-learn==1.8.0
+torchmetrics==1.9.0       # required by pytorch-lightning
+lightning-utilities==0.15.3  # required by pytorch-lightning
+patsy==1.0.2              # required by statsmodels
+pillow==12.1.1            # required by streamlit
+tqdm==4.67.3              # required by pytorch-forecasting
+pyarrow==23.0.1           # streamlit strongly recommends it
