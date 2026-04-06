@@ -167,8 +167,20 @@ def load_tft_model(
         # 版差分で衝突する既知キーを除去
         hparams.pop("monotone_constraints", None)
 
-        # 現在のTFT実装が受け取れる引数だけ残す
-        allowed = set(inspect.signature(TemporalFusionTransformer.__init__).parameters)
+        # 現在のTFT実装（基底クラス含む）が受け取れる引数だけ残す
+        # output_transformer など基底クラスのパラメータも拾うため MRO 全体を走査する
+        allowed: set[str] = set()
+        for cls in TemporalFusionTransformer.__mro__:
+            if cls is object:
+                continue
+            init = vars(cls).get("__init__")
+            if init is None:
+                continue
+            try:
+                allowed.update(inspect.signature(init).parameters)
+            except (ValueError, TypeError):
+                pass
+        allowed.discard("self")
         hparams = {k: v for k, v in hparams.items() if k in allowed}
         
         # 3. PyTorch Lightningのバグを【完全にバイパス】して直接インスタンス化

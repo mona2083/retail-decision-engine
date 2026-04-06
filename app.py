@@ -22,6 +22,7 @@ from forecasting import fit_forecast, decompose_weekly_patterns
 from pricing import demand_at_price, profit_at_price, find_optimal_price, price_sensitivity_curve
 from tft_inference import default_tft_checkpoint_path, load_tft_model, predict_dynamic_demand
 from inventory import run_inventory_optimization, simple_eoq
+import traceback
 import warnings
 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
@@ -98,7 +99,11 @@ def weekly_demand_forecast_tft_or_fallback(
         except Exception as exc:
             logged_failures = st.session_state.setdefault("logged_tft_failures", set())
             if product_id not in logged_failures:
-                logger.warning("TFT inference failed for %s: %s: %s", product_id, type(exc).__name__, exc)
+                logger.warning(
+                    "TFT inference failed for %s: %s: %s\n%s",
+                    product_id, type(exc).__name__, exc,
+                    traceback.format_exc(),
+                )
                 logged_failures.add(product_id)
     return _fallback_forecast(), True
 
